@@ -1,0 +1,59 @@
+# Paper-trading instances. Each one gets its own simulated account in state/<name>.json.
+#
+#   tradebot paper             # run all enabled instances (Ctrl+C to stop)
+#   tradebot paper -i sma-spy  # run just one
+#   tradebot status            # how is everyone doing?
+#
+# Any key under `defaults` can be overridden per instance.
+
+defaults:
+  data_source: yfinance     # yfinance (no keys) | alpaca (needs keys in env)
+  interval: 1d              # 1d, 1h, 15m, 5m ... (yfinance intraday history is limited)
+  starting_cash: 10000
+  commission: 0
+  slippage_bps: 1
+  fractional: true
+  allocation: 1.0           # fraction of equity to use, split equally across symbols
+  market_hours_only: true
+  daily_trade_after: "15:45"  # daily bars: decide near the close (New York time)
+  poll_seconds: 300
+  state_dir: state
+
+instances:
+  - name: benchmark-spy
+    strategy: buy_and_hold
+    symbols: [SPY]
+
+  - name: sma-spy
+    strategy: sma_cross
+    params: {fast: 20, slow: 50}
+    symbols: [SPY]
+
+  - name: rsi-qqq
+    strategy: rsi_reversion
+    symbols: [QQQ]
+
+  - name: macd-megacaps
+    strategy: macd_cross
+    symbols: [AAPL, MSFT, NVDA]
+
+  - name: bollinger-spy
+    strategy: bollinger_reversion
+    symbols: [SPY]
+
+  - name: turtle-qqq
+    strategy: donchian_breakout
+    params: {entry: 55, exit: 20}
+    symbols: [QQQ]
+
+  - name: tiktok-ema-spy
+    strategy: ema_cross_trend
+    symbols: [SPY]
+
+  # Intraday example (disabled). Flip `enabled` to try it.
+  - name: ema-spy-15m
+    strategy: ema_cross_trend
+    params: {trend: 100}
+    symbols: [SPY]
+    interval: 15m
+    enabled: false

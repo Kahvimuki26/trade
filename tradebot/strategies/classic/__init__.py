@@ -1,0 +1,1 @@
+"""Classic, well-known strategies."""
