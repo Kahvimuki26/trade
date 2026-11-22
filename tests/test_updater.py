@@ -70,3 +70,28 @@ def test_check_offline(project, monkeypatch):
     monkeypatch.setattr(updater, "latest_sha", boom)
     info = updater.check(project)
     assert info["available"] is False and "no internet" in info["error"]
+
+
+def test_manifest_removes_files_dropped_upstream(project):
+    updater.apply_zip(make_zip({"tradebot/a.py": "1", "tradebot/b.py": "1"}), "v1", project)
+    (project / "tradebot" / "mine.py").write_text("user file")
+    r = updater.apply_zip(make_zip({"tradebot/a.py": "2"}), "v2", project)
+    assert r["removed"] == ["tradebot/b.py"]
+    assert not (project / "tradebot" / "b.py").exists()
+    assert (project / "tradebot" / "mine.py").exists() and (project / ".env").exists()
+
+
+def test_legacy_cleanup(tmp_path):
+    from tradebot import launch
+
+    for rel in launch.LEGACY_FILES[:4] + ["tradebot/strategies/social/my_own.py"]:
+        f = tmp_path / rel
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text("x")
+    (tmp_path / "tradebot" / "strategies" / "base.py").write_text("x")
+    (tmp_path / ".env").write_text("keep")
+    n = launch.remove_legacy(tmp_path)
+    assert n == 5
+    assert (tmp_path / "tradebot" / "strategies" / "social" / "my_own.py").exists()  # user file kept
+    assert (tmp_path / ".env").read_text() == "keep"
+    assert not (tmp_path / "tradebot" / "backtest.py").exists()

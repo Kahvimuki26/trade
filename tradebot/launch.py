@@ -18,6 +18,41 @@ RESTART_CODE = 3
 ROOT = updater.ROOT
 RESUME_FILE = ROOT / ".tradebot-resume"
 
+# Files from the old stock-trading version. Removed once after updating to the crypto autopilot.
+LEGACY_FILES = [
+    "tradebot/alpaca_broker.py", "tradebot/backtest.py", "tradebot/config.py", "tradebot/paper.py",
+    "tradebot/strategies/__init__.py", "tradebot/strategies/base.py",
+    "tradebot/strategies/classic/__init__.py", "tradebot/strategies/classic/strategies.py",
+    "tradebot/strategies/daytrade/__init__.py", "tradebot/strategies/daytrade/orb.py",
+    "tradebot/strategies/daytrade/scalper.py", "tradebot/strategies/social/__init__.py",
+    "tradebot/strategies/social/_template.py", "tradebot/strategies/social/ema_trend.py",
+    "tradebot/strategies/social/opening_candle.py",
+    "tests/test_alpaca_broker.py", "tests/test_backtest.py", "tests/test_daytrade.py",
+    "tests/test_opening_candle.py", "tests/test_paper.py", "tests/test_strategies.py",
+]
+
+
+def remove_legacy(root: Path = None) -> int:
+    """Delete the old version's files (never .env, your settings or history). Returns how many."""
+    root = root or ROOT
+    if updater.is_git_checkout(root):
+        return 0
+    removed = 0
+    for rel in LEGACY_FILES:
+        f = root / rel
+        if f.is_file():
+            f.unlink()
+            removed += 1
+    for d in sorted({(root / rel).parent for rel in LEGACY_FILES}, key=lambda p: len(p.parts), reverse=True):
+        cache = d / "__pycache__"
+        if cache.is_dir():
+            for x in cache.iterdir():
+                x.unlink()
+            cache.rmdir()
+        if d.is_dir() and d != root and not any(d.iterdir()):
+            d.rmdir()
+    return removed
+
 
 def deps_marker() -> Path:
     return Path(sys.prefix) / ".tradebot-deps"
@@ -31,7 +66,7 @@ def install_packages(force: bool = False) -> None:
         return
     print("  Installing / updating packages (one moment)...")
     code = subprocess.call([sys.executable, "-m", "pip", "install", "-q", "--disable-pip-version-check",
-                            "-e", ".[alpaca]"], cwd=ROOT)
+                            "-e", "."], cwd=ROOT)
     if code == 0:
         marker.write_text(digest)
     else:
@@ -42,6 +77,8 @@ def main() -> int:
     os.chdir(ROOT)
     print()
     updater.main(["--quiet"])
+    if remove_legacy():
+        print("  Cleaned up files from the old version.")
     install_packages()
     first = True
     while True:

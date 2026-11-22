@@ -1,188 +1,174 @@
-"""Market data providers.
+"""Crypto market data from Binance's free public API (no account or keys needed).
 
-All providers return a DataFrame indexed by timestamp with lowercase columns
-``open, high, low, close, volume``, sorted oldest to newest.
-
-* ``yfinance``: free, no keys. Intraday history is limited (1m: ~7 days,
-  5m/15m/30m: ~60 days, 1h: ~2 years).
-* ``alpaca``: needs ALPACA_API_KEY / ALPACA_SECRET_KEY (free paper account).
-  Uses the free IEX feed by default; set ALPACA_DATA_FEED=sip if you pay for it.
-* ``csv``: reads ``<dir>/<SYMBOL>.csv``. Good for offline work and tests.
+Prices are in USDT, a dollar-pegged coin, so 1 USDT is about $1.
+History is cached in data/cache/ so tests on past data don't re-download.
 """
 
 from __future__ import annotations
 
-import logging
-import os
-import re
-from datetime import datetime, time as dtime, timedelta, timezone
+import json
+import threading
+import time
+import urllib.parse
+import urllib.request
+import zlib
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
-COLUMNS = ["open", "high", "low", "close", "volume"]
-log = logging.getLogger("tradebot")
+HOSTS = ["https://data-api.binance.vision", "https://api.binance.com"]
+HOUR_MS = 3_600_000
+CACHE_DIR = Path("data/cache")
+COINS = ["BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "LINK", "SUI", "LTC", "DOT", "TRX", "PEPE"]
 
 
-def _clean(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.rename(columns=str.lower)
-    missing = set(COLUMNS) - set(df.columns)
-    if missing:
-        raise ValueError(f"Data is missing columns: {sorted(missing)}")
-    df = df[COLUMNS].astype(float).dropna(subset=["open", "high", "low", "close"])
-    df = df[~df.index.duplicated(keep="last")].sort_index()
-    df.index.name = "timestamp"
+def pair(coin: str) -> str:
+    return coin.upper() + "USDT"
+
+
+def _get(path: str, params: dict) -> object:
+    q = urllib.parse.urlencode(params)
+    err = None
+    for host in HOSTS:
+        try:
+            req = urllib.request.Request(f"{host}{path}?{q}", headers={"User-Agent": "tradebot"})
+            with urllib.request.urlopen(req, timeout=15) as r:
+                return json.loads(r.read())
+        except Exception as e:  # try the next host
+            err = e
+    raise ConnectionError(f"Couldn't reach Binance ({err})")
+
+
+def _frame(rows: list) -> pd.DataFrame:
+    if not rows:
+        return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+    a = np.array([r[:7] for r in rows], dtype=float)
+    df = pd.DataFrame(a[:, 1:6], columns=["open", "high", "low", "close", "volume"],
+                      index=pd.to_datetime(a[:, 0].astype("int64"), unit="ms", utc=True))
+    df.index.name = "time"
     return df
 
 
-def parse_interval(interval: str) -> tuple[int, str]:
-    m = re.fullmatch(r"(\d+)\s*(m|min|h|d|wk)", interval.strip().lower())
-    if not m:
-        raise ValueError(f"Bad interval '{interval}'. Use e.g. 1m, 5m, 15m, 1h, 1d, 1wk")
-    unit = {"min": "m"}.get(m.group(2), m.group(2))
-    return int(m.group(1)), unit
+class MarketData:
+    """Interface: hourly candles (closed ones only) and live prices."""
 
+    def candles(self, coin: str, bars: int = 800) -> pd.DataFrame:
+        raise NotImplementedError
 
-class DataProvider:
-    def get_bars(
-        self, symbol: str, start: datetime | str, end: datetime | str | None = None, interval: str = "1d"
-    ) -> pd.DataFrame:
+    def history(self, coin: str, start: pd.Timestamp) -> pd.DataFrame:
+        raise NotImplementedError
+
+    def prices(self, coins: list[str]) -> dict[str, float]:
         raise NotImplementedError
 
 
-class YFinanceProvider(DataProvider):
-    def get_bars(self, symbol, start, end=None, interval="1d"):
-        import yfinance as yf
+class Binance(MarketData):
+    def __init__(self, cache_dir: Path = CACHE_DIR):
+        self.cache_dir = cache_dir
+        self._mem: dict[str, tuple[float, pd.DataFrame]] = {}
+        self._lock = threading.Lock()
 
-        n, unit = parse_interval(interval)
-        if unit in ("m", "h"):  # Yahoo only keeps limited intraday history
-            max_days = 7 if (unit == "m" and n == 1) else 59 if unit == "m" else 729
-            earliest = utcnow() - timedelta(days=max_days)
-            st = pd.Timestamp(start)
-            if (st.tz_localize("UTC") if st.tzinfo is None else st) < earliest:
-                log.warning("Yahoo only has ~%d days of %s bars; starting at %s. Use --source alpaca "
-                            "for longer intraday history.", max_days, interval, earliest.date())
-                start = earliest
-        df = yf.Ticker(symbol).history(
-            start=start, end=end, interval=f"{n}{unit}", auto_adjust=True, actions=False
-        )
-        if df.empty:
-            raise ValueError(f"No data from Yahoo for {symbol} ({interval}, start={start})")
-        if unit in ("d", "wk"):
-            df.index = df.index.tz_localize(None).normalize()
-        return _clean(df)
+    def _klines(self, coin: str, start_ms: int | None = None, limit: int = 1000) -> pd.DataFrame:
+        params = {"symbol": pair(coin), "interval": "1h", "limit": limit}
+        if start_ms is not None:
+            params["startTime"] = start_ms
+        df = _frame(_get("/api/v3/klines", params))
+        # drop the candle that's still forming
+        now = pd.Timestamp.now(tz="UTC")
+        return df[df.index + pd.Timedelta(hours=1) <= now]
 
+    def candles(self, coin: str, bars: int = 800) -> pd.DataFrame:
+        """The last ``bars`` closed hourly candles (cached for 5 minutes)."""
+        with self._lock:
+            hit = self._mem.get(coin)
+            if hit and time.time() - hit[0] < 300 and len(hit[1]) >= bars:
+                return hit[1].iloc[-bars:]
+        start = int((pd.Timestamp.now(tz="UTC") - pd.Timedelta(hours=bars + 2)).timestamp() * 1000)
+        df = self._fetch_range(coin, start)
+        with self._lock:
+            self._mem[coin] = (time.time(), df)
+        return df.iloc[-bars:]
 
-class AlpacaProvider(DataProvider):
-    def __init__(self, api_key: str | None = None, secret_key: str | None = None, feed: str | None = None):
-        try:
-            from alpaca.data.historical import StockHistoricalDataClient
-        except ImportError as e:  # pragma: no cover
-            raise ImportError("Install alpaca-py:  pip install 'tradebot[alpaca]'") from e
-        api_key = api_key or os.environ.get("ALPACA_API_KEY")
-        secret_key = secret_key or os.environ.get("ALPACA_SECRET_KEY")
-        if not api_key or not secret_key:
-            raise RuntimeError("Set ALPACA_API_KEY and ALPACA_SECRET_KEY (see .env.example)")
-        self.client = StockHistoricalDataClient(api_key, secret_key)
-        self.feed = (feed or os.environ.get("ALPACA_DATA_FEED", "iex")).lower()
+    def _fetch_range(self, coin: str, start_ms: int) -> pd.DataFrame:
+        parts, cursor = [], start_ms
+        while True:
+            df = self._klines(coin, cursor)
+            if df.empty:
+                break
+            parts.append(df)
+            nxt = int(df.index[-1].timestamp() * 1000) + HOUR_MS
+            if len(df) < 999 or nxt <= cursor:
+                break
+            cursor = nxt
+        if not parts:
+            raise ValueError(f"No price data for {coin}. Is {pair(coin)} traded on Binance?")
+        out = pd.concat(parts)
+        return out[~out.index.duplicated(keep="last")].sort_index()
 
-    def _end(self, end):
-        # The free plan can read SIP (full market) data only if it's >15 minutes old.
-        if end is not None:
-            end = pd.Timestamp(end)
-            end = end.tz_localize("UTC") if end.tzinfo is None else end
-        if self.feed == "sip":
-            latest = pd.Timestamp(utcnow() - timedelta(minutes=16))
-            end = latest if end is None else min(end, latest)
-        return end.to_pydatetime() if end is not None else None
+    def history(self, coin: str, start: pd.Timestamp) -> pd.DataFrame:
+        """Closed hourly candles from ``start`` until now, using the disk cache."""
+        start = pd.Timestamp(start).tz_convert("UTC") if pd.Timestamp(start).tzinfo else pd.Timestamp(start, tz="UTC")
+        path = self.cache_dir / f"{pair(coin)}_1h.csv"
+        cached = pd.DataFrame()
+        if path.exists():
+            cached = pd.read_csv(path, index_col=0)
+            cached.index = pd.to_datetime(cached.index, utc=True)
+        if not cached.empty and cached.index[0] <= start:
+            fetch_from = cached.index[-1] + pd.Timedelta(hours=1)
+        else:
+            fetch_from, cached = start, pd.DataFrame()
+        if pd.Timestamp.now(tz="UTC") - fetch_from > pd.Timedelta(hours=1):
+            new = self._fetch_range(coin, int(fetch_from.timestamp() * 1000))
+            cached = pd.concat([cached, new]) if not cached.empty else new
+            cached = cached[~cached.index.duplicated(keep="last")].sort_index()
+            self.cache_dir.mkdir(parents=True, exist_ok=True)
+            cached.to_csv(path)
+        return cached[cached.index >= start]
 
-    def get_bars(self, symbol, start, end=None, interval="1d"):
-        from alpaca.data.enums import Adjustment, DataFeed
-        from alpaca.data.requests import StockBarsRequest
-        from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
-
-        n, unit = parse_interval(interval)
-        tf_unit = {"m": TimeFrameUnit.Minute, "h": TimeFrameUnit.Hour,
-                   "d": TimeFrameUnit.Day, "wk": TimeFrameUnit.Week}[unit]
-        req = StockBarsRequest(
-            symbol_or_symbols=symbol,
-            timeframe=TimeFrame(n, tf_unit),
-            start=pd.Timestamp(start).to_pydatetime(),
-            end=self._end(end),
-            adjustment=Adjustment.ALL,
-            feed=DataFeed(self.feed),
-        )
-        bars = self.client.get_stock_bars(req).df
-        if bars.empty:
-            raise ValueError(f"No data from Alpaca for {symbol} ({interval}, start={start})")
-        df = bars.xs(symbol, level="symbol") if isinstance(bars.index, pd.MultiIndex) else bars
-        df.index = pd.DatetimeIndex(df.index).tz_convert("America/New_York")
-        if unit in ("d", "wk"):
-            df.index = df.index.tz_localize(None).normalize()
-        else:  # regular session only (Alpaca also returns pre/post-market bars)
-            t = df.index.time
-            df = df[(t >= dtime(9, 30)) & (t < dtime(16, 0))]
-        return _clean(df)
+    def prices(self, coins: list[str]) -> dict[str, float]:
+        symbols = json.dumps([pair(c) for c in coins], separators=(",", ":"))
+        rows = _get("/api/v3/ticker/price", {"symbols": symbols})
+        by_pair = {r["symbol"]: float(r["price"]) for r in rows}
+        return {c: by_pair[pair(c)] for c in coins if pair(c) in by_pair}
 
 
-class CsvProvider(DataProvider):
-    """Reads ``<directory>/<SYMBOL>.csv`` with a date/timestamp column + OHLCV."""
+class Synthetic(MarketData):
+    """Made-up prices with trending and choppy stretches. Used by tests and demos."""
 
-    def __init__(self, directory: str | Path = "data"):
-        self.directory = Path(directory)
+    def __init__(self, hours: int = 24 * 200, seed: int = 0, end: pd.Timestamp | None = None):
+        self.hours, self.seed = hours, seed
+        self.end = (end or pd.Timestamp.now(tz="UTC")).floor("h")
+        self._cache: dict[str, pd.DataFrame] = {}
+        self.price_bump: dict[str, float] = {}
 
-    def get_bars(self, symbol, start=None, end=None, interval="1d"):
-        path = self.directory / f"{symbol}.csv"
-        df = pd.read_csv(path)
-        ts_col = next(c for c in df.columns if c.lower() in ("date", "datetime", "timestamp", "time"))
-        raw = df.pop(ts_col)
-        try:
-            idx = pd.DatetimeIndex(pd.to_datetime(raw))
-        except ValueError:  # mixed UTC offsets, e.g. -05:00 / -04:00 across daylight saving
-            idx = pd.DatetimeIndex(pd.to_datetime(raw, utc=True)).tz_convert("America/New_York")
-        if idx.tz is not None:
-            idx = idx.tz_convert("America/New_York")
-        df.index = idx
-        df = _clean(df)
-        if start is not None:
-            df = df[df.index >= _match_tz(start, df.index)]
-        if end is not None:
-            df = df[df.index <= _match_tz(end, df.index)]
-        return df
+    def _series(self, coin: str) -> pd.DataFrame:
+        if coin not in self._cache:
+            rng = np.random.default_rng(zlib.crc32(f"{coin}:{self.seed}".encode()))
+            n = self.hours
+            drift = np.zeros(n)
+            i = 0
+            while i < n:  # alternate regimes: up-trend, chop, down-trend
+                length = int(rng.integers(72, 400))
+                drift[i:i + length] = rng.choice([0.0005, 0.0, -0.0005], p=[0.38, 0.32, 0.30])
+                i += length
+            vol = 0.007 + 0.006 * rng.random()
+            rets = drift + rng.normal(0, vol, n)
+            close = 100 * (1 + 10 * rng.random()) * np.exp(np.cumsum(rets))
+            open_ = np.r_[close[0], close[:-1]]
+            high = np.maximum(open_, close) * (1 + np.abs(rng.normal(0, vol / 2, n)))
+            low = np.minimum(open_, close) * (1 - np.abs(rng.normal(0, vol / 2, n)))
+            idx = pd.date_range(end=self.end - pd.Timedelta(hours=1), periods=n, freq="h", tz="UTC")
+            self._cache[coin] = pd.DataFrame({"open": open_, "high": high, "low": low, "close": close,
+                                              "volume": rng.integers(100, 1000, n).astype(float)}, index=idx)
+        return self._cache[coin]
 
+    def candles(self, coin: str, bars: int = 800) -> pd.DataFrame:
+        return self._series(coin).iloc[-bars:]
 
-def _match_tz(ts, index: pd.DatetimeIndex) -> pd.Timestamp:
-    """Make ``ts`` comparable with ``index`` (both tz-aware or both naive)."""
-    ts = pd.Timestamp(ts)
-    if index.tz is None and ts.tzinfo is not None:
-        return ts.tz_convert("America/New_York").tz_localize(None)
-    if index.tz is not None and ts.tzinfo is None:
-        return ts.tz_localize(index.tz)
-    return ts
+    def history(self, coin: str, start: pd.Timestamp) -> pd.DataFrame:
+        df = self._series(coin)
+        return df[df.index >= start]
 
-
-def get_provider(name: str, **kwargs) -> DataProvider:
-    name = name.lower()
-    if name in ("yfinance", "yahoo"):
-        return YFinanceProvider()
-    if name == "alpaca":
-        return AlpacaProvider(**kwargs)
-    if name == "csv":
-        return CsvProvider(**kwargs)
-    raise ValueError(f"Unknown data source '{name}'. Use yfinance, alpaca or csv.")
-
-
-def default_lookback(interval: str) -> timedelta:
-    """How much history to fetch for live signals (enough for a 200-bar indicator)."""
-    n, unit = parse_interval(interval)
-    if unit == "m":  # as much as Yahoo allows: daily-ATR style rules need weeks of intraday bars
-        return timedelta(days=7 if n == 1 else 59)
-    if unit == "h":
-        return timedelta(days=120 * n)
-    if unit == "wk":
-        return timedelta(weeks=300 * n)
-    return timedelta(days=450 * n)
-
-
-def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    def prices(self, coins: list[str]) -> dict[str, float]:
+        return {c: float(self._series(c)["close"].iloc[-1]) * self.price_bump.get(c, 1.0) for c in coins}

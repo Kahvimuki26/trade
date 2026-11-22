@@ -25,9 +25,10 @@ OWNER, REPO = "Kahvimuki26", "trade"
 DEFAULT_BRANCH = "claude/chat-session-crakqk"
 ROOT = Path(__file__).resolve().parents[1]
 VERSION_FILE = ".tradebot-version"
+MANIFEST_FILE = ".tradebot-files"  # files that came with the installed version
 PROTECTED = (
     ".env", ".venv/", ".git/", "state/", "data/", "results/",
-    "configs/instances.yaml", "configs/instances.yaml.bak", VERSION_FILE, ".tradebot-resume",
+    "configs/instances.yaml", "configs/instances.yaml.bak", VERSION_FILE, MANIFEST_FILE, ".tradebot-resume",
 )
 UA = {"User-Agent": "tradebot-updater"}
 
@@ -80,7 +81,7 @@ def _protected(rel: str) -> bool:
 
 def apply_zip(data: bytes, sha: str, root: Path = ROOT) -> dict:
     """Extract a GitHub source zip over ``root``. Returns counts of changed files."""
-    changed, added, skipped = [], [], []
+    changed, added, skipped, shipped = [], [], [], set()
     with zipfile.ZipFile(io.BytesIO(data)) as z:
         for info in z.infolist():
             parts = info.filename.split("/", 1)
@@ -92,6 +93,7 @@ def apply_zip(data: bytes, sha: str, root: Path = ROOT) -> dict:
             if _protected(rel):
                 skipped.append(rel)
                 continue
+            shipped.add(rel)
             target = root / rel
             new = z.read(info)
             if target.exists() and target.read_bytes() == new:
@@ -104,8 +106,19 @@ def apply_zip(data: bytes, sha: str, root: Path = ROOT) -> dict:
             if mode & 0o100:
                 os.chmod(tmp, mode | 0o644)
             os.replace(tmp, target)
+    # files that the previous version shipped but this one doesn't -> remove (never user files)
+    removed = []
+    manifest = root / MANIFEST_FILE
+    if manifest.exists():
+        for rel in manifest.read_text().splitlines():
+            if rel and rel not in shipped and not _protected(rel) and ".." not in Path(rel).parts:
+                f = root / rel
+                if f.is_file():
+                    f.unlink()
+                    removed.append(rel)
+    manifest.write_text("\n".join(sorted(shipped)) + "\n")
     (root / VERSION_FILE).write_text(sha + "\n")
-    return {"changed": changed, "added": added, "skipped": skipped, "version": sha}
+    return {"changed": changed, "added": added, "removed": removed, "skipped": skipped, "version": sha}
 
 
 def update(root: Path = ROOT, force: bool = False) -> dict:

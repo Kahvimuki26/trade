@@ -11,3 +11,5 @@ data/*.csv
 *.updating
 .tradebot-version
 .tradebot-resume
+.tradebot-files
+data/

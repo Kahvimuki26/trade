@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 
@@ -89,3 +90,11 @@ def bar_minutes(df: pd.DataFrame) -> int:
     if len(df) < 2:
         return 1
     return max(1, int(pd.Series(df.index).diff().median().total_seconds() // 60))
+
+
+def latch(entries: pd.Series, exits: pd.Series, value: int = 1) -> pd.Series:
+    """Hold ``value`` from an entry bar until an exit bar, else 0 (exit wins ties)."""
+    state = pd.Series(np.nan, index=entries.index)
+    state[entries.fillna(False).astype(bool)] = value
+    state[exits.fillna(False).astype(bool)] = 0
+    return state.ffill().fillna(0).astype(int)
