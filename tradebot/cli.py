@@ -266,7 +266,21 @@ def build_parser() -> argparse.ArgumentParser:
     rs.add_argument("name")
     cfg_arg(rs)
     rs.set_defaults(func=cmd_reset)
+
+    w = sub.add_parser("web", help="Open the dashboard in your browser (http://127.0.0.1:8000)")
+    cfg_arg(w)
+    w.add_argument("--host", default="127.0.0.1", help="Default 127.0.0.1 = only this computer")
+    w.add_argument("--port", type=int, default=8000)
+    w.add_argument("--open", action="store_true", help="Open the browser automatically")
+    w.add_argument("--start", action="store_true", help="Start paper trading right away")
+    w.set_defaults(func=cmd_web)
     return p
+
+
+def cmd_web(args) -> None:
+    from .web import serve
+
+    serve(args.config, host=args.host, port=args.port, open_browser=args.open, autostart=args.start)
 
 
 def load_dotenv(path: str = ".env") -> None:

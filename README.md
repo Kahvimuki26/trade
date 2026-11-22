@@ -8,12 +8,31 @@ instances at once, each with its own strategy, symbols and simulated account.
 > promise of future results, and most social-media strategies don't survive one.
 > That's what this tool is for.
 
-## Setup
+## Quick start (no terminal needed)
+
+1. Install Python from python.org (Windows: tick **"Add Python to PATH"**).
+2. Double-click **`start.bat`** (Windows) or **`start.command`** (Mac; if blocked, right-click → Open).
+   The first run sets everything up, then the dashboard opens at **http://127.0.0.1:8000**.
+3. Keep that window open while you use it. Close it to stop.
+
+In the dashboard:
+- **Paper trading:** press **Start**, and every enabled instance trades with fake money on live prices
+  during US market hours. Click a card for its chart and trades. **+ Add instance** adds another strategy.
+- **Backtest:** pick a strategy and symbols, then **Run**, to see how it would have done.
+  **Paper trade this** turns a backtest into an instance.
+- **Compare:** every strategy side by side on the same stocks.
+- **Strategies:** what each one does. **Settings:** the raw config file.
+
+To open it from your phone or on your own domain (e.g. `trade.icemail.fun`), see
+**[docs/CLOUDFLARE.md](docs/CLOUDFLARE.md)**.
+
+## Setup (terminal)
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
+python -m venv .venv && source .venv/bin/activate    # Windows: .venv\Scripts\activate
 pip install -e ".[dev,alpaca]"     # alpaca = Alpaca data + paper broker
 pytest                              # optional sanity check
+tradebot web --open                 # the dashboard; everything below also works from the terminal
 ```
 
 Data comes from Yahoo Finance by default, so no account is needed. To use Alpaca
@@ -184,7 +203,10 @@ tradebot/
   backtest.py          backtest engine
   metrics.py           performance stats
   paper.py             multi-instance paper trader
+  web/                 dashboard (`tradebot web`): API + static/index.html
   cli.py               `tradebot` command
+start.bat / start.command   double-click launchers
+docs/CLOUDFLARE.md     put the dashboard on your own domain
 configs/instances.yaml
 tests/
 ```

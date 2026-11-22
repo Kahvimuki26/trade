@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
-import time
+import threading
 from datetime import datetime, time as dtime, timedelta
 from pathlib import Path
 from typing import Callable
@@ -181,6 +181,97 @@ def make_fetcher(providers: dict[str, DataProvider] | None = None, now: datetime
     return fetch
 
 
+class Runner:
+    """Runs paper-trading ticks, either in the foreground or in a background thread.
+
+    The config is re-read on every tick, so edits (from the web UI or by hand)
+    take effect without a restart.
+    """
+
+    def __init__(self, load: Callable[[], Config], names: list[str] | None = None,
+                 providers: dict[str, DataProvider] | None = None):
+        self.load = load
+        self.names = names
+        self.providers = providers if providers is not None else {}
+        self._thread: threading.Thread | None = None
+        self._stop = threading.Event()
+        self._lock = threading.Lock()
+        self.last_tick: str | None = None
+        self.last_error: str | None = None
+        self._waiting_logged = False
+
+    def selected(self, config: Config) -> list[InstanceConfig]:
+        sel = [i for i in config.instances if i.enabled and (not self.names or i.name in self.names)]
+        if self.names:
+            missing = set(self.names) - {i.name for i in sel}
+            if missing:
+                raise KeyError(f"Unknown or disabled instance(s): {sorted(missing)}")
+        return sel
+
+    def tick(self, force: bool = False) -> int:
+        """One pass over all enabled instances. Returns how many instances traded/updated."""
+        with self._lock:
+            config = self.load()
+            now = utcnow()
+            instances = [PaperInstance(c, config.state_dir) for c in self.selected(config)]
+            due = [i for i in instances if force or i.should_trade_now(now)]
+            if not due:
+                if not self._waiting_logged:
+                    log.info("Nothing to do right now (market closed or outside trade window). Waiting...")
+                    self._waiting_logged = True
+                return 0
+            self._waiting_logged = False
+            fetch = make_fetcher(self.providers, now)
+            for inst in due:
+                try:
+                    inst.tick(fetch, now)
+                except Exception as e:  # keep the other instances running
+                    log.error("[%s] tick failed: %s", inst.cfg.name, e)
+                    self.last_error = f"{inst.cfg.name}: {e}"
+            self.last_tick = now.isoformat(timespec="seconds")
+            return len(due)
+
+    def loop(self) -> None:
+        config = self.load()
+        sel = self.selected(config)
+        if not sel:
+            raise ValueError("No enabled instances to run")
+        log.info("Paper trading %d instance(s): %s", len(sel),
+                 ", ".join(f"{c.name} ({c.strategy} on {','.join(c.symbols)})" for c in sel))
+        while not self._stop.is_set():
+            try:
+                self.tick()
+            except Exception as e:
+                log.error("tick failed: %s", e)
+                self.last_error = str(e)
+            self._stop.wait(self.load().poll_seconds)
+
+    # ------------------------------------------------------- background mode
+    @property
+    def running(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
+
+    def start(self) -> None:
+        if self.running:
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._safe_loop, name="paper-runner", daemon=True)
+        self._thread.start()
+
+    def _safe_loop(self) -> None:
+        try:
+            self.loop()
+        except Exception as e:
+            log.error("Paper trader stopped: %s", e)
+            self.last_error = str(e)
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=5)
+        log.info("Paper trader stopped")
+
+
 def run(
     config: Config,
     names: list[str] | None = None,
@@ -189,35 +280,10 @@ def run(
     providers: dict[str, DataProvider] | None = None,
 ) -> None:
     """Main loop. ``force`` ignores market hours / trade windows (useful for testing)."""
-    selected = [i for i in config.instances if i.enabled and (not names or i.name in names)]
-    if names:
-        missing = set(names) - {i.name for i in selected}
-        if missing:
-            raise KeyError(f"Unknown or disabled instance(s): {sorted(missing)}")
-    if not selected:
+    runner = Runner(lambda: config, names, providers)
+    if not runner.selected(config):
         raise ValueError("No enabled instances to run")
-
-    instances = [PaperInstance(c, config.state_dir) for c in selected]
-    providers = providers if providers is not None else {}
-    log.info("Paper trading %d instance(s): %s", len(instances),
-             ", ".join(f"{i.cfg.name} ({i.strategy!r} on {','.join(i.cfg.symbols)})" for i in instances))
-
-    waiting_logged = False
-    while True:
-        now = utcnow()
-        due = [i for i in instances if force or i.should_trade_now(now)]
-        if due:
-            waiting_logged = False
-            fetch = make_fetcher(providers, now)
-            for inst in due:
-                try:
-                    inst.tick(fetch, now)
-                except Exception as e:  # keep the other instances running
-                    log.error("[%s] tick failed: %s", inst.cfg.name, e)
-        elif not waiting_logged:
-            log.info("Nothing to do right now (market closed or outside trade window). Waiting...")
-            waiting_logged = True
-
-        if once:
-            return
-        time.sleep(config.poll_seconds)
+    if once:
+        runner.tick(force=force)
+    else:
+        runner.loop()

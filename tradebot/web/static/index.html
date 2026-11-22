@@ -1,0 +1,581 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tradebot</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%232563eb'/><path d='M6 22l6-7 5 4 9-11' stroke='white' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --panel-2: #f1f3f6; --text: #111827; --muted: #6b7280;
+  --border: #e5e7eb; --accent: #2563eb; --accent-text: #fff; --up: #059669; --down: #dc2626;
+  --warn: #b45309; --shadow: 0 1px 2px rgba(0,0,0,.05), 0 1px 8px rgba(0,0,0,.04);
+  --grid: #eceef2;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d1117; --panel: #161b22; --panel-2: #1f2630; --text: #e6edf3; --muted: #8b949e;
+    --border: #2b323c; --accent: #3b82f6; --up: #34d399; --down: #f87171; --warn: #fbbf24;
+    --shadow: none; --grid: #222a34;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0d1117; --panel: #161b22; --panel-2: #1f2630; --text: #e6edf3; --muted: #8b949e;
+  --border: #2b323c; --accent: #3b82f6; --up: #34d399; --down: #f87171; --warn: #fbbf24;
+  --shadow: none; --grid: #222a34;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+a { color: var(--accent); }
+header { position: sticky; top: 0; z-index: 10; background: var(--panel); border-bottom: 1px solid var(--border); }
+.bar { max-width: 1200px; margin: 0 auto; padding: 10px 16px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.logo { font-weight: 700; font-size: 16px; display: flex; align-items: center; gap: 8px; }
+.logo svg { width: 22px; height: 22px; }
+nav { display: flex; gap: 2px; flex-wrap: wrap; }
+nav a { padding: 6px 10px; border-radius: 6px; color: var(--muted); text-decoration: none; font-weight: 500; }
+nav a.active, nav a:hover { color: var(--text); background: var(--panel-2); }
+.spacer { flex: 1; }
+main { max-width: 1200px; margin: 0 auto; padding: 20px 16px 60px; }
+h1 { font-size: 20px; margin: 0 0 4px; } h2 { font-size: 15px; margin: 0 0 12px; }
+.sub { color: var(--muted); margin: 0 0 18px; }
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; box-shadow: var(--shadow); }
+.grid { display: grid; gap: 14px; }
+.cols-3 { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px;
+  background: var(--panel-2); color: var(--muted); font-size: 12px; font-weight: 500; white-space: nowrap; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.dot.on { background: var(--up); } .dot.off { background: var(--down); }
+.up { color: var(--up); } .down { color: var(--down); } .muted { color: var(--muted); }
+button, .btn { font: inherit; font-weight: 500; border: 1px solid var(--border); background: var(--panel);
+  color: var(--text); padding: 7px 12px; border-radius: 7px; cursor: pointer; }
+button:hover { background: var(--panel-2); }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+button.primary:hover { filter: brightness(1.08); }
+button.danger { color: var(--down); }
+button:disabled { opacity: .55; cursor: default; }
+button.small { padding: 4px 9px; font-size: 12px; }
+label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); font-weight: 500; }
+input, select, textarea { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--border);
+  border-radius: 7px; padding: 7px 9px; width: 100%; }
+input[type=checkbox] { width: auto; }
+textarea { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
+.form { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
+.form .wide { grid-column: 1 / -1; }
+.inst { cursor: pointer; transition: border-color .15s; display: grid; gap: 10px; }
+.inst:hover { border-color: var(--accent); }
+.inst.disabled { opacity: .6; }
+.inst-top { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
+.name { font-weight: 600; font-size: 15px; word-break: break-word; }
+.big { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; font-size: 13px; }
+.kv span:nth-child(odd) { color: var(--muted); }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+.tile { background: var(--panel-2); border-radius: 8px; padding: 10px 12px; }
+.tile .l { font-size: 12px; color: var(--muted); } .tile .v { font-size: 18px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.tile .h { font-size: 11px; color: var(--muted); margin-top: 2px; }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+th { color: var(--muted); font-weight: 500; font-size: 12px; cursor: default; }
+td.num, th.num { text-align: right; }
+.scroll { overflow-x: auto; }
+.chart { width: 100%; height: 280px; position: relative; }
+.chart svg { width: 100%; height: 100%; display: block; overflow: visible; }
+.chart .tip { position: absolute; pointer-events: none; background: var(--panel); border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px 8px; font-size: 12px; box-shadow: var(--shadow); white-space: nowrap; display: none; z-index: 2; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--muted); margin-top: 8px; }
+.legend i { display: inline-block; width: 10px; height: 3px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+.log { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; max-height: 260px;
+  overflow: auto; background: var(--panel-2); border-radius: 8px; padding: 8px 10px; }
+.log div { white-space: pre-wrap; word-break: break-word; }
+.log .ERROR { color: var(--down); } .log .WARNING { color: var(--warn); }
+.empty { text-align: center; color: var(--muted); padding: 30px 10px; }
+.note { background: var(--panel-2); border-left: 3px solid var(--accent); padding: 10px 12px; border-radius: 6px; font-size: 13px; white-space: pre-wrap; }
+.warnbox { border-left-color: var(--warn); }
+dialog { border: 1px solid var(--border); border-radius: 12px; background: var(--panel); color: var(--text);
+  padding: 0; width: min(860px, calc(100vw - 24px)); max-height: calc(100vh - 40px); }
+dialog::backdrop { background: rgba(0,0,0,.45); }
+.dlg-head { display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--panel); z-index: 3; }
+.dlg-body { padding: 16px; display: grid; gap: 16px; }
+.toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg);
+  padding: 9px 14px; border-radius: 8px; font-weight: 500; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 50; max-width: calc(100vw - 32px); }
+.toast.show { opacity: 1; }
+.toast.err { background: var(--down); color: #fff; }
+.switch { position: relative; width: 34px; height: 20px; flex: none; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.switch span { position: absolute; inset: 0; background: var(--border); border-radius: 20px; transition: .15s; cursor: pointer; }
+.switch span::before { content: ""; position: absolute; width: 14px; height: 14px; left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: .15s; }
+.switch input:checked + span { background: var(--up); }
+.switch input:checked + span::before { transform: translateX(14px); }
+.spin { display: inline-block; width: 14px; height: 14px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: s .7s linear infinite; vertical-align: -2px; }
+@keyframes s { to { transform: rotate(360deg); } }
+.help summary { cursor: pointer; font-weight: 500; }
+.help p, .help li { color: var(--muted); }
+code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-size: 12.5px; }
+@media (max-width: 640px) { .big { font-size: 19px; } nav a { padding: 6px 8px; } th, td { padding: 6px; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <div class="logo"><svg viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="var(--accent)"/><path d="M6 22l6-7 5 4 9-11" stroke="white" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>tradebot</div>
+    <nav id="nav">
+      <a href="#/" data-page="overview">Paper trading</a>
+      <a href="#/backtest" data-page="backtest">Backtest</a>
+      <a href="#/compare" data-page="compare">Compare</a>
+      <a href="#/strategies" data-page="strategies">Strategies</a>
+      <a href="#/settings" data-page="settings">Settings</a>
+    </nav>
+    <div class="spacer"></div>
+    <span class="pill" id="market"><span class="dot"></span>market</span>
+    <button class="small" id="theme" title="Light / dark" aria-label="Toggle light or dark theme" style="display:inline-flex;padding:6px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></button>
+  </div>
+</header>
+<main id="app"></main>
+
+<dialog id="dlg"><div class="dlg-head"><h2 id="dlg-title" style="margin:0"></h2><button class="small" onclick="dlg.close()">Close</button></div><div class="dlg-body" id="dlg-body"></div></dialog>
+<div class="toast" id="toast"></div>
+
+<script>
+// ----------------------------------------------------------------- utils
+const $ = (s, el = document) => el.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const pct = (v, d = 2) => v == null ? "–" : (v * 100).toFixed(d) + "%";
+const money = v => v == null ? "–" : v.toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 2 });
+const num = (v, d = 2) => v == null ? "–" : Number(v).toLocaleString(undefined, { maximumFractionDigits: d });
+const cls = v => v == null ? "" : v > 0 ? "up" : v < 0 ? "down" : "";
+const dlg = $("#dlg");
+const COLORS = ["#2563eb", "#f59e0b", "#10b981", "#e11d48", "#8b5cf6", "#06b6d4", "#84cc16", "#f97316", "#ec4899", "#64748b"];
+let STRATS = [];
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...opts,
+    body: opts.body ? JSON.stringify(opts.body) : undefined });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || data.detail || res.statusText);
+  return data;
+}
+function toast(msg, err = false) {
+  const t = $("#toast"); t.textContent = msg; t.className = "toast show" + (err ? " err" : "");
+  clearTimeout(t._h); t._h = setTimeout(() => t.className = "toast", err ? 6000 : 2500);
+}
+async function busy(btn, fn) {
+  const html = btn.innerHTML; btn.disabled = true; btn.innerHTML = `<span class="spin"></span> ${html}`;
+  try { return await fn(); } catch (e) { toast(e.message, true); } finally { btn.disabled = false; btn.innerHTML = html; }
+}
+function fmtTime(t) {
+  if (!t) return "–";
+  const d = new Date(t); if (isNaN(d)) return t;
+  const opts = { month: "short", day: "numeric" };
+  if (d.getFullYear() !== new Date().getFullYear()) opts.year = "numeric";
+  if (d.getHours() || d.getMinutes()) { opts.hour = "2-digit"; opts.minute = "2-digit"; }  // daily bars have no time
+  return d.toLocaleString(undefined, opts);
+}
+
+// theme toggle (remembered per browser)
+(() => {
+  let t = null; try { t = localStorage.getItem("theme"); } catch {}
+  if (t) document.documentElement.dataset.theme = t;
+  $("#theme").onclick = () => {
+    const dark = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim() === "#0d1117";
+    const next = dark ? "light" : "dark"; document.documentElement.dataset.theme = next;
+    try { localStorage.setItem("theme", next); } catch {}
+    route();
+  };
+})();
+
+// ----------------------------------------------------------------- chart
+function lineChart(el, series, { yFmt = pct, height = 280, zero = true } = {}) {
+  el.classList.add("chart"); el.style.height = height + "px";
+  const pts = series.flatMap(s => s.points);
+  if (!pts.length) { el.innerHTML = `<div class="empty">No data yet</div>`; return; }
+  const W = el.clientWidth || 600, H = height, L = 58, R = 10, T = 10, B = 26;
+  const xs = series.map(s => s.points.map(p => +new Date(p[0])));
+  let xmin = Math.min(...xs.flat()), xmax = Math.max(...xs.flat()); if (xmin === xmax) xmax = xmin + 1;
+  let ys = pts.map(p => p[1]).filter(v => v != null); if (zero) ys.push(0);
+  let ymin = Math.min(...ys), ymax = Math.max(...ys); if (ymin === ymax) { ymin -= 1e-3; ymax += 1e-3; }
+  const pad = (ymax - ymin) * .06; ymin -= pad; ymax += pad;
+  const X = x => L + (x - xmin) / (xmax - xmin) * (W - L - R), Y = y => T + (1 - (y - ymin) / (ymax - ymin)) * (H - T - B);
+  const css = getComputedStyle(document.documentElement);
+  const grid = css.getPropertyValue("--grid"), muted = css.getPropertyValue("--muted");
+  let svg = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">`;
+  for (let i = 0; i <= 4; i++) {
+    const v = ymin + (ymax - ymin) * i / 4, y = Y(v);
+    svg += `<line x1="${L}" x2="${W - R}" y1="${y}" y2="${y}" stroke="${grid}"/><text x="${L - 8}" y="${y + 4}" text-anchor="end" font-size="11" fill="${muted}">${esc(yFmt(v, 1))}</text>`;
+  }
+  if (zero && ymin < 0 && ymax > 0) svg += `<line x1="${L}" x2="${W - R}" y1="${Y(0)}" y2="${Y(0)}" stroke="${muted}" stroke-dasharray="3 3" opacity=".6"/>`;
+  const span = xmax - xmin, ticks = W < 520 ? 2 : 5;
+  for (let i = 0; i <= ticks; i++) {
+    const x = xmin + span * i / ticks, d = new Date(x);
+    const lab = span < 3 * 864e5 ? d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
+      : span < 400 * 864e5 ? d.toLocaleDateString(undefined, { month: "short", day: "numeric" })
+      : d.toLocaleDateString(undefined, { year: "numeric", month: "short" });
+    svg += `<text x="${X(x)}" y="${H - 6}" text-anchor="${i === 0 ? "start" : i === ticks ? "end" : "middle"}" font-size="11" fill="${muted}">${esc(lab)}</text>`;
+  }
+  series.forEach((s, i) => {
+    const c = s.color || COLORS[i % COLORS.length];
+    const d = s.points.filter(p => p[1] != null).map((p, j) => `${j ? "L" : "M"}${X(+new Date(p[0])).toFixed(1)},${Y(p[1]).toFixed(1)}`).join("");
+    svg += `<path d="${d}" fill="none" stroke="${c}" stroke-width="${s.width || 1.8}" ${s.dash ? `stroke-dasharray="${s.dash}"` : ""} stroke-linejoin="round" vector-effect="non-scaling-stroke"/>`;
+  });
+  svg += `<line id="xh" y1="${T}" y2="${H - B}" stroke="${muted}" opacity="0"/></svg><div class="tip"></div>`;
+  el.innerHTML = svg;
+  if (series.length > 1 || series[0].name) {
+    el.insertAdjacentHTML("beforeend", `<div class="legend" style="position:absolute;left:${L}px;top:${H}px">${series.map((s, i) => `<span><i style="background:${s.color || COLORS[i % COLORS.length]}"></i>${esc(s.name)}</span>`).join("")}</div>`);
+    el.style.marginBottom = "28px";
+  }
+  const tip = $(".tip", el), xh = $("#xh", el), svgEl = $("svg", el);
+  svgEl.onmousemove = e => {
+    const r = svgEl.getBoundingClientRect(), mx = (e.clientX - r.left) / r.width * W;
+    const xv = xmin + (mx - L) / (W - L - R) * (xmax - xmin);
+    let rows = [], when = null;
+    series.forEach((s, i) => {
+      let best = null, bd = Infinity;
+      for (const p of s.points) { const dd = Math.abs(+new Date(p[0]) - xv); if (dd < bd) { bd = dd; best = p; } }
+      if (best) { when = when || best[0]; rows.push(`<div><i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${s.color || COLORS[i % COLORS.length]};margin-right:5px"></i>${esc(s.name || "")} <b>${esc(yFmt(best[1]))}</b></div>`); }
+    });
+    xh.setAttribute("x1", mx); xh.setAttribute("x2", mx); xh.setAttribute("opacity", ".5");
+    tip.innerHTML = `<div class="muted">${esc(fmtTime(when))}</div>${rows.join("")}`; tip.style.display = "block";
+    const left = (e.clientX - r.left) + 14; tip.style.left = Math.min(left, r.width - tip.offsetWidth - 4) + "px"; tip.style.top = "8px";
+  };
+  svgEl.onmouseleave = () => { tip.style.display = "none"; xh.setAttribute("opacity", "0"); };
+}
+function spark(values, up) {
+  if (!values || values.length < 2) return "";
+  const W = 120, H = 32, mn = Math.min(...values), mx = Math.max(...values), r = mx - mn || 1;
+  const d = values.map((v, i) => `${i ? "L" : "M"}${(i / (values.length - 1) * W).toFixed(1)},${(H - 2 - (v - mn) / r * (H - 4)).toFixed(1)}`).join("");
+  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><path d="${d}" fill="none" stroke="var(--${up ? "up" : "down"})" stroke-width="1.6"/></svg>`;
+}
+
+// ----------------------------------------------------------------- router
+const pages = {};
+let timers = [];
+function route() {
+  timers.forEach(clearInterval); timers = [];
+  const page = (location.hash.replace(/^#\//, "").split("?")[0]) || "overview";
+  document.querySelectorAll("#nav a").forEach(a => a.classList.toggle("active", a.dataset.page === page));
+  (pages[page] || pages.overview)($("#app"));
+}
+window.addEventListener("hashchange", route);
+
+// ----------------------------------------------------------------- overview
+let logAfter = 0, logLines = [];
+pages.overview = async app => {
+  app.innerHTML = `
+    <div class="row" style="justify-content:space-between;margin-bottom:16px">
+      <div><h1>Paper trading</h1><p class="sub" style="margin:0">Fake money, live prices. Each instance runs one strategy with its own account.</p></div>
+      <div class="row">
+        <span class="pill" id="runstate"><span class="dot"></span>…</span>
+        <button id="runbtn" class="primary">Start</button>
+        <button id="tickbtn" title="Check every instance right now">Check now</button>
+        <button id="addbtn">+ Add instance</button>
+      </div>
+    </div>
+    <div id="ov-warn"></div>
+    <div class="card" style="margin-bottom:14px"><h2>Returns since start</h2><div id="ov-chart"></div></div>
+    <div class="grid cols-3" id="cards"></div>
+    <div class="card" style="margin-top:14px"><div class="row" style="justify-content:space-between"><h2 style="margin:0">Activity</h2><span class="muted" style="font-size:12px">trades, checks and errors appear here</span></div><div class="log" id="log" style="margin-top:10px"></div></div>`;
+  $("#addbtn").onclick = () => editInstance();
+  $("#tickbtn").onclick = e => busy(e.currentTarget, async () => {
+    const r = await api("/api/runner/tick", { method: "POST", body: { force: false } });
+    toast(r.updated ? `Checked ${r.updated} instance(s)` : "Market closed / outside trade window. Nothing to do.");
+    refresh();
+  });
+  $("#tickbtn").oncontextmenu = e => { e.preventDefault(); busy(e.currentTarget, async () => { await api("/api/runner/tick", { method: "POST", body: { force: true } }); toast("Forced a check (ignoring market hours)"); refresh(); }); };
+  renderLog();
+  await refresh();
+  timers.push(setInterval(refresh, 15000), setInterval(pollLog, 4000));
+  pollLog();
+};
+async function refresh() {
+  let ov;
+  try { ov = await api("/api/overview"); } catch (e) { toast(e.message, true); return; }
+  setMarket(ov);
+  const rs = $("#runstate"); if (!rs) return;
+  rs.innerHTML = `<span class="dot ${ov.runner.running ? "on" : "off"}"></span>${ov.runner.running ? `running · checks every ${ov.runner.poll_seconds}s` : "stopped"}`;
+  const rb = $("#runbtn");
+  rb.textContent = ov.runner.running ? "Stop" : "Start"; rb.className = ov.runner.running ? "" : "primary";
+  rb.onclick = e => busy(e.currentTarget, async () => {
+    await api(`/api/runner/${ov.runner.running ? "stop" : "start"}`, { method: "POST" });
+    toast(ov.runner.running ? "Stopped" : "Started. It trades while the US market is open.");
+    setTimeout(refresh, 600);
+  });
+  const enabled = ov.instances.filter(i => i.enabled);
+  $("#ov-warn").innerHTML = !ov.runner.running && enabled.length
+    ? `<div class="note warnbox" style="margin-bottom:14px">The paper trader is <b>stopped</b>. Press <b>Start</b> and keep this computer on during US market hours (9:30–16:00 New York) so it can trade.</div>` : "";
+  $("#cards").innerHTML = ov.instances.length ? ov.instances.map(instCard).join("") :
+    `<div class="card empty">No instances yet. <a href="#" onclick="editInstance();return false">Add one</a>.</div>`;
+  document.querySelectorAll(".inst").forEach(c => c.onclick = e => { if (!e.target.closest(".switch")) showInstance(c.dataset.name); });
+  document.querySelectorAll(".inst .switch input").forEach(cb => cb.onchange = async () => {
+    try { await api(`/api/instances/${encodeURIComponent(cb.dataset.name)}/enabled`, { method: "POST", body: { enabled: cb.checked } }); toast(cb.checked ? "Enabled" : "Disabled"); refresh(); }
+    catch (e) { toast(e.message, true); cb.checked = !cb.checked; }
+  });
+  const hist = await api("/api/history");
+  const chartEl = $("#ov-chart");
+  if (chartEl) hist.length ? lineChart(chartEl, hist.map(h => ({ name: h.name, points: h.points }))) :
+    chartEl.innerHTML = `<div class="empty">Nothing yet. Once instances have traded, their returns show up here.</div>`;
+}
+function instCard(i) {
+  const pos = Object.entries(i.positions || {});
+  return `<div class="card inst ${i.enabled ? "" : "disabled"}" data-name="${esc(i.name)}">
+    <div class="inst-top"><div><div class="name">${esc(i.name)}</div><div class="muted" style="font-size:12px">${esc(i.strategy)} · ${esc(i.symbols.join(", "))} · ${esc(i.interval)}</div></div>
+      <label class="switch" title="Enabled"><input type="checkbox" data-name="${esc(i.name)}" ${i.enabled ? "checked" : ""}><span></span></label></div>
+    <div class="row" style="justify-content:space-between;align-items:flex-end">
+      <div><div class="big">${i.started ? money(i.equity) : `<span class="muted" style="font-size:15px">not started</span>`}</div>
+      <div class="${cls(i.return)}" style="font-weight:600">${i.started ? (i.return >= 0 ? "+" : "") + pct(i.return) : ""}</div></div>
+      ${i.started ? spark(i.spark, i.return >= 0) : ""}</div>
+    <div class="row" style="gap:6px">
+      <span class="pill">${i.broker === "alpaca" ? "Alpaca paper" : "simulated"}</span>
+      ${pos.length ? pos.map(([s, q]) => `<span class="pill ${q > 0 ? "up" : "down"}">${q > 0 ? "LONG" : "SHORT"} ${esc(s)}</span>`).join("") : i.started ? `<span class="pill">flat</span>` : ""}
+      ${i.orders ? `<span class="pill">${i.orders} order${i.orders === 1 ? "" : "s"}</span>` : ""}
+    </div>
+    ${i.last_update ? `<div class="muted" style="font-size:12px">updated ${esc(fmtTime(i.last_update))}</div>` : ""}
+  </div>`;
+}
+function setMarket(ov) {
+  $("#market").innerHTML = `<span class="dot ${ov.market_open ? "on" : "off"}"></span>market ${ov.market_open ? "open" : "closed"} · NY ${esc(ov.ny_time)}`;
+}
+async function pollLog() {
+  try { const lines = await api(`/api/logs?after=${logAfter}`); if (lines.length) { logAfter = lines.at(-1).id; logLines.push(...lines); logLines = logLines.slice(-300); renderLog(); } } catch {}
+}
+function renderLog() {
+  const el = $("#log"); if (!el) return;
+  el.innerHTML = logLines.length ? logLines.map(l => `<div class="${l.level}"><span class="muted">${l.time}</span> ${esc(l.msg)}</div>`).join("") : `<div class="muted">Nothing yet.</div>`;
+  el.scrollTop = el.scrollHeight;
+}
+
+async function showInstance(name) {
+  const i = await api(`/api/instances/${encodeURIComponent(name)}`);
+  $("#dlg-title").textContent = i.name;
+  const trades = i.trades || [];
+  $("#dlg-body").innerHTML = `
+    <div class="tiles">
+      <div class="tile"><div class="l">Equity</div><div class="v">${i.started ? money(i.equity) : "–"}</div></div>
+      <div class="tile"><div class="l">Return</div><div class="v ${cls(i.return)}">${pct(i.return)}</div></div>
+      <div class="tile"><div class="l">Closed trades</div><div class="v">${i.round_trips ?? 0}</div></div>
+      <div class="tile"><div class="l">Win rate</div><div class="v">${pct(i.win_rate, 0)}</div></div>
+    </div>
+    <div class="kv">
+      <span>Strategy</span><span>${esc(i.strategy)} ${Object.keys(i.params || {}).length ? `<span class="muted">${esc(JSON.stringify(i.params))}</span>` : ""}</span>
+      <span>Symbols</span><span>${esc(i.symbols.join(", "))}</span>
+      <span>Bars</span><span>${esc(i.interval)} · data from ${esc(i.data_source)}</span>
+      <span>Account</span><span>${i.broker === "alpaca" ? `Alpaca paper (${esc(i.alpaca_account)})` : `simulated, started with ${money(i.starting_cash)}`}</span>
+      <span>Positions</span><span>${Object.entries(i.positions || {}).map(([s, q]) => `${q > 0 ? "long" : "short"} ${num(Math.abs(q), 4)} ${esc(s)}`).join(", ") || "flat"}</span>
+      <span>Last signal</span><span>${Object.entries(i.last_signals || {}).map(([s, v]) => `${esc(s)}: ${v > 0 ? "long" : v < 0 ? "short" : "flat"} @ ${num(i.last_prices?.[s])}`).join(" · ") || "–"}</span>
+    </div>
+    <div><h2>Equity</h2><div id="inst-chart"></div></div>
+    <div><h2>Trades</h2>${trades.length ? `<div class="scroll"><table><tr><th>Time</th><th>Symbol</th><th>Side</th><th class="num">Qty</th><th class="num">Price</th><th class="num">P&amp;L</th></tr>
+      ${trades.map(t => `<tr><td>${esc(fmtTime(t.ts))}</td><td>${esc(t.symbol)}</td><td class="${t.qty > 0 ? "up" : "down"}">${t.qty > 0 ? "BUY" : "SELL"}</td><td class="num">${num(Math.abs(t.qty), 4)}</td><td class="num">${num(t.price)}</td><td class="num ${cls(t.realized_pnl)}">${t.realized_pnl == null ? "" : money(t.realized_pnl)}</td></tr>`).join("")}</table></div>` : `<div class="muted">No trades yet.</div>`}</div>
+    <div class="row"><button id="i-edit">Edit</button><button id="i-reset">Reset account</button><button class="danger" id="i-del">Delete</button></div>`;
+  dlg.showModal();
+  const eh = i.equity_history || [];
+  lineChart($("#inst-chart"), [{ name: "", points: eh }], { yFmt: v => money(v), zero: false, height: 220 });
+  $("#i-edit").onclick = () => { dlg.close(); editInstance(i); };
+  $("#i-reset").onclick = e => { if (confirm(`Reset ${i.name}? Its positions and history are archived and it starts over.${i.broker === "alpaca" ? " (This doesn't close positions in your Alpaca account.)" : ""}`)) busy(e.currentTarget, async () => { await api(`/api/instances/${encodeURIComponent(i.name)}/reset`, { method: "POST" }); dlg.close(); toast("Reset"); route(); }); };
+  $("#i-del").onclick = e => { if (confirm(`Delete instance ${i.name} from the config?`)) busy(e.currentTarget, async () => { await api(`/api/instances/${encodeURIComponent(i.name)}`, { method: "DELETE" }); dlg.close(); toast("Deleted"); route(); }); };
+}
+
+// ----------------------------------------------------------------- instance editor
+function paramInputs(strat, values = {}) {
+  return Object.entries(strat.params).map(([k, d]) => {
+    const v = values[k] ?? d;
+    if (typeof d === "boolean") return `<label><span>${esc(k)}</span><select data-param="${esc(k)}" data-type="bool"><option value="true" ${v ? "selected" : ""}>yes</option><option value="false" ${!v ? "selected" : ""}>no</option></select></label>`;
+    if (typeof d === "number") return `<label><span>${esc(k)}</span><input data-param="${esc(k)}" data-type="num" type="number" step="any" value="${esc(v)}"></label>`;
+    return `<label><span>${esc(k)}</span><input data-param="${esc(k)}" value="${esc(v)}"></label>`;
+  }).join("") || `<div class="muted">This strategy has no parameters.</div>`;
+}
+function readParams(root) {
+  const out = {};
+  root.querySelectorAll("[data-param]").forEach(el => {
+    const t = el.dataset.type, v = el.value;
+    out[el.dataset.param] = t === "num" ? Number(v) : t === "bool" ? v === "true" : v;
+  });
+  return out;
+}
+function stratInfo(s) {
+  return `<div class="note"><b>${esc(s.description)}</b>${s.interval ? `\nNeeds ${esc(s.interval)} bars.` : ""}${s.recommended?.symbols ? ` Default symbols: ${esc(s.recommended.symbols.join(", "))}.` : ""}${s.notes ? "\n\n" + esc(s.notes) : ""}</div>`;
+}
+async function editInstance(inst = null, preset = {}) {
+  if (!STRATS.length) STRATS = await api("/api/strategies");
+  const isNew = !inst; inst = inst || {};
+  const v = { strategy: STRATS.find(s => s.name === "sma_cross")?.name || STRATS[0].name, broker: "sim", alpaca_account: "default", enabled: true, ...inst, ...preset };
+  $("#dlg-title").textContent = isNew ? "Add paper-trading instance" : `Edit ${inst.name}`;
+  $("#dlg-body").innerHTML = `
+    <div class="form">
+      <label class="wide"><span>Strategy</span><select id="f-strategy">${STRATS.map(s => `<option value="${s.name}" ${s.name === v.strategy ? "selected" : ""}>${esc(s.name)} — ${esc(s.description)}</option>`).join("")}</select></label>
+      <div class="wide" id="f-info"></div>
+      <label><span>Name (unique)</span><input id="f-name" value="${esc(v.name || "")}" placeholder="e.g. sma-spy"></label>
+      <label><span>Symbols (comma separated)</span><input id="f-symbols" value="${esc((preset.symbols || inst.symbols || []).join?.(", ") ?? "")}"></label>
+      <label><span>Account</span><select id="f-broker"><option value="sim" ${v.broker === "sim" ? "selected" : ""}>Simulated (local)</option><option value="alpaca" ${v.broker === "alpaca" ? "selected" : ""}>Alpaca paper account</option></select></label>
+      <label id="f-acct-w"><span>Alpaca account name</span><input id="f-acct" value="${esc(v.alpaca_account)}" title="default = ALPACA_API_KEY; 'two' = ALPACA_TWO_API_KEY"></label>
+      <label><span>Starting cash (simulated)</span><input id="f-cash" type="number" value="${esc(inst.starting_cash ?? 10000)}"></label>
+      <label><span>Data source</span><select id="f-source">${["yfinance", "alpaca"].map(s => `<option ${(v.data_source || "yfinance") === s ? "selected" : ""}>${s}</option>`).join("")}</select></label>
+      <div class="wide"><h2 style="margin:6px 0 8px">Parameters</h2><div class="form" id="f-params"></div></div>
+    </div>
+    <div id="f-alpaca-note"></div>
+    <div class="row"><button class="primary" id="f-save">${isNew ? "Add instance" : "Save"}</button><button onclick="dlg.close()">Cancel</button></div>`;
+  const sel = $("#f-strategy");
+  const sync = (first) => {
+    const s = STRATS.find(x => x.name === sel.value);
+    $("#f-info").innerHTML = stratInfo(s);
+    $("#f-params").innerHTML = paramInputs(s, first ? { ...(inst.params || {}), ...(preset.params || {}) } : {});
+    $("#f-symbols").placeholder = s.recommended?.symbols ? s.recommended.symbols.join(", ") + " (default)" : "SPY";
+    if (!$("#f-name").value || $("#f-name").dataset.auto) { $("#f-name").value = suggestName(s, $("#f-symbols").value); $("#f-name").dataset.auto = 1; }
+  };
+  const syncBroker = () => {
+    const a = $("#f-broker").value === "alpaca";
+    $("#f-acct-w").style.display = a ? "" : "none";
+    $("#f-alpaca-note").innerHTML = a ? `<div class="note">Orders go to your <b>Alpaca paper account</b> (fake money, real fills). Put its keys in <code>.env</code> (account <code>default</code> → <code>ALPACA_API_KEY</code>/<code>ALPACA_SECRET_KEY</code>; account <code>two</code> → <code>ALPACA_TWO_API_KEY</code>/…). Each Alpaca instance needs its own paper account.</div>` : "";
+  };
+  if (isNew && !v.name) $("#f-name").dataset.auto = 1;
+  $("#f-name").oninput = () => delete $("#f-name").dataset.auto;
+  $("#f-symbols").oninput = () => { if ($("#f-name").dataset.auto) $("#f-name").value = suggestName(STRATS.find(x => x.name === sel.value), $("#f-symbols").value); };
+  sel.onchange = () => sync(false); $("#f-broker").onchange = syncBroker;
+  sync(true); syncBroker();
+  $("#f-save").onclick = e => busy(e.currentTarget, async () => {
+    const body = {
+      original_name: inst.name, name: $("#f-name").value.trim(), strategy: sel.value, symbols: $("#f-symbols").value,
+      broker: $("#f-broker").value, alpaca_account: $("#f-broker").value === "alpaca" ? $("#f-acct").value.trim() : undefined,
+      starting_cash: Number($("#f-cash").value) || 10000, data_source: $("#f-source").value === "yfinance" ? undefined : $("#f-source").value,
+      params: readParams($("#f-params")), enabled: v.enabled !== false, interval: inst.interval && inst.interval !== STRATS.find(x => x.name === sel.value).interval && inst.interval !== "1d" ? inst.interval : undefined,
+    };
+    await api("/api/instances", { method: "POST", body });
+    dlg.close(); toast(isNew ? "Instance added" : "Saved"); location.hash = "#/"; route();
+  });
+  if (!dlg.open) dlg.showModal();
+}
+function suggestName(s, symbols) {
+  const sym = (symbols || (s.recommended?.symbols || ["SPY"]).join("-")).split(/[\s,]+/).filter(Boolean).slice(0, 2).join("-").toLowerCase();
+  return `${s.name.replace(/_/g, "-")}-${sym || "spy"}`;
+}
+
+// ----------------------------------------------------------------- backtest
+pages.backtest = async app => {
+  if (!STRATS.length) STRATS = await api("/api/strategies");
+  const q = new URLSearchParams(location.hash.split("?")[1] || "");
+  const pick = q.get("s") || "sma_cross";
+  app.innerHTML = `<h1>Backtest</h1><p class="sub">Replay a strategy on past prices. Signals are decided at a bar's close and filled at the next bar's open, so it can't peek at the future.</p>
+    <div class="card"><div class="form">
+      <label class="wide"><span>Strategy</span><select id="b-strategy">${STRATS.map(s => `<option value="${s.name}" ${s.name === pick ? "selected" : ""}>${esc(s.name)} — ${esc(s.description)}</option>`).join("")}</select></label>
+      <div class="wide" id="b-info"></div>
+      <label><span>Symbols</span><input id="b-symbols" placeholder="SPY"></label>
+      <label><span>Start</span><input id="b-start" type="date" value="2015-01-01"></label>
+      <label><span>End (blank = today)</span><input id="b-end" type="date"></label>
+      <label><span>Bar size</span><select id="b-interval"><option value="">auto</option>${["1d", "1h", "15m", "5m"].map(x => `<option>${x}</option>`).join("")}</select></label>
+      <label><span>Data source</span><select id="b-source"><option>yfinance</option><option>alpaca</option></select></label>
+      <label><span>Starting cash</span><input id="b-cash" type="number" value="10000"></label>
+      <label><span>Max leverage (blank = strategy default)</span><input id="b-lev" type="number" step="0.1" placeholder="auto"></label>
+      <label><span>Slippage (bps per fill)</span><input id="b-slip" type="number" step="0.5" value="1"></label>
+      <div class="wide"><details><summary class="muted" style="cursor:pointer">Parameters</summary><div class="form" id="b-params" style="margin-top:10px"></div></details></div>
+    </div>
+    <div class="row" style="margin-top:14px"><button class="primary" id="b-run">Run backtest</button><span class="muted" id="b-hint"></span></div></div>
+    <div id="b-out"></div>`;
+  const sel = $("#b-strategy");
+  const sync = () => {
+    const s = STRATS.find(x => x.name === sel.value);
+    $("#b-info").innerHTML = stratInfo(s);
+    $("#b-params").innerHTML = paramInputs(s);
+    $("#b-symbols").placeholder = (s.recommended?.symbols || ["SPY"]).join(", ");
+    const intraday = s.interval && s.interval.endsWith("m");
+    $("#b-hint").textContent = intraday ? "Tip: intraday strategies need Data source = alpaca for more than ~60 days of history." : "";
+    if (intraday) $("#b-start").value = "2019-01-01";
+  };
+  sel.onchange = sync; sync();
+  $("#b-run").onclick = e => busy(e.currentTarget, async () => {
+    const body = { strategy: sel.value, symbols: $("#b-symbols").value, start: $("#b-start").value, end: $("#b-end").value || null,
+      interval: $("#b-interval").value || null, source: $("#b-source").value, cash: $("#b-cash").value, max_leverage: $("#b-lev").value,
+      slippage_bps: $("#b-slip").value, params: readParams($("#b-params")) };
+    const r = await api("/api/backtest", { method: "POST", body });
+    renderBacktest(r, body);
+  });
+};
+const METRICS = [
+  ["total_return", "Total return", pct, "gain over the whole period"], ["benchmark_return", "Buy & hold", pct, "just holding the same stocks"],
+  ["cagr", "Per year (CAGR)", pct, "average yearly growth"], ["max_drawdown", "Max drawdown", pct, "worst drop from a peak"],
+  ["sharpe", "Sharpe", num, "return vs bumpiness; >1 is good"], ["win_rate", "Win rate", v => pct(v, 1), "share of winning trades"],
+  ["round_trips", "Trades", v => num(v, 0), "completed round trips"], ["profit_factor", "Profit factor", num, "gross wins / gross losses"],
+  ["exposure", "Time invested", v => pct(v, 0), "how often it holds a position"], ["end_equity", "Final equity", money, ""],
+];
+function renderBacktest(r, body) {
+  const m = r.metrics, beat = m.total_return > m.benchmark_return;
+  $("#b-out").innerHTML = `
+    <div class="card" style="margin-top:14px">
+      <div class="row" style="justify-content:space-between"><div><h2 style="margin:0">${esc(r.title)}</h2><div class="muted" style="font-size:12px">${esc(fmtTime(r.from))} → ${esc(fmtTime(r.to))} · ${esc(r.interval)} bars</div></div>
+      <span class="pill ${beat ? "up" : "down"}">${beat ? "beat" : "lost to"} buy &amp; hold</span></div>
+      <div class="tiles" style="margin-top:14px">${METRICS.map(([k, l, f, h]) => `<div class="tile"><div class="l">${l}</div><div class="v ${["total_return", "cagr", "benchmark_return"].includes(k) ? cls(m[k]) : ""}">${f(m[k])}</div><div class="h">${h}</div></div>`).join("")}</div>
+      <div id="b-chart" style="margin-top:16px"></div>
+      <div class="row" style="margin-top:8px"><button id="b-paper">Paper trade this</button></div>
+    </div>
+    <div class="card" style="margin-top:14px"><h2>Trades <span class="muted" style="font-weight:400">(latest ${r.trades.length})</span></h2>
+      ${r.trades.length ? `<div class="scroll" style="max-height:420px"><table><tr><th>Time</th><th>Symbol</th><th>Side</th><th class="num">Qty</th><th class="num">Price</th><th class="num">P&amp;L</th></tr>
+      ${r.trades.map(t => `<tr><td>${esc(fmtTime(t.ts))}</td><td>${esc(t.symbol)}</td><td class="${t.side === "BUY" ? "up" : "down"}">${t.side}</td><td class="num">${num(Math.abs(t.qty), 4)}</td><td class="num">${num(t.price)}</td><td class="num ${cls(t.realized_pnl)}">${t.realized_pnl == null ? "" : money(t.realized_pnl)}</td></tr>`).join("")}</table></div>` : `<div class="muted">No trades.</div>`}</div>`;
+  const base = r.equity[0]?.[1] || 1;
+  lineChart($("#b-chart"), [
+    { name: "Strategy", points: r.equity.map(p => [p[0], p[1] / base - 1]) },
+    { name: "Buy & hold", points: r.equity.map(p => [p[0], p[2] / base - 1]), color: "#94a3b8", dash: "4 3", width: 1.4 },
+  ]);
+  $("#b-paper").onclick = () => editInstance(null, { strategy: body.strategy, symbols: r.symbols, params: body.params });
+}
+
+// ----------------------------------------------------------------- compare
+pages.compare = async app => {
+  app.innerHTML = `<h1>Compare strategies</h1><p class="sub">Every strategy on the same stocks and dates, ranked by Sharpe. The grey row is plain buy &amp; hold. Most strategies lose to it.</p>
+    <div class="card"><div class="form">
+      <label><span>Symbols</span><input id="c-symbols" value="SPY"></label>
+      <label><span>Start</span><input id="c-start" type="date" value="2015-01-01"></label>
+      <label><span>Bar size</span><select id="c-interval">${["1d", "1h", "15m", "5m"].map(x => `<option>${x}</option>`).join("")}</select></label>
+      <label><span>Data source</span><select id="c-source"><option>yfinance</option><option>alpaca</option></select></label>
+    </div><div class="row" style="margin-top:14px"><button class="primary" id="c-run">Compare</button></div></div><div id="c-out"></div>`;
+  $("#c-run").onclick = e => busy(e.currentTarget, async () => {
+    const body = { symbols: $("#c-symbols").value, start: $("#c-start").value, interval: $("#c-interval").value, source: $("#c-source").value };
+    const r = await api("/api/compare", { method: "POST", body });
+    const cols = [["total_return", "Total", pct], ["cagr", "Per year", pct], ["sharpe", "Sharpe", num], ["max_drawdown", "Max DD", pct], ["win_rate", "Win rate", v => pct(v, 0)], ["round_trips", "Trades", v => num(v, 0)], ["exposure", "Invested", v => pct(v, 0)]];
+    $("#c-out").innerHTML = `<div class="card" style="margin-top:14px"><div class="scroll"><table><tr><th>Strategy</th>${cols.map(c => `<th class="num">${c[1]}</th>`).join("")}<th></th></tr>
+      ${r.rows.map(row => `<tr style="${row.strategy === "buy_and_hold" ? "background:var(--panel-2)" : ""}"><td><b>${esc(row.strategy)}</b></td>${cols.map(([k, , f]) => `<td class="num ${["total_return", "cagr"].includes(k) ? cls(row[k]) : ""}">${f(row[k])}</td>`).join("")}<td><a href="#/backtest?s=${encodeURIComponent(row.strategy)}">details</a></td></tr>`).join("")}</table></div>
+      ${r.skipped.length ? `<p class="muted" style="margin-bottom:0">Skipped (need other bar sizes): ${esc(r.skipped.join(", "))}</p>` : ""}</div>
+      <div class="card" style="margin-top:14px"><h2>Growth</h2><div id="c-chart"></div></div>`;
+    lineChart($("#c-chart"), r.rows.map(row => ({ name: row.strategy, color: row.strategy === "buy_and_hold" ? "#94a3b8" : undefined,
+      points: row.curve })));
+  });
+};
+
+// ----------------------------------------------------------------- strategies
+pages.strategies = async app => {
+  STRATS = await api("/api/strategies");
+  app.innerHTML = `<h1>Strategies</h1><p class="sub">To add one (e.g. from TikTok), copy <code>tradebot/strategies/social/_template.py</code>, then restart the dashboard.</p>
+    <div class="grid cols-3">${STRATS.map(s => `<div class="card" style="display:grid;gap:8px;align-content:start">
+      <div class="row" style="justify-content:space-between"><b>${esc(s.name)}</b><span class="pill">${esc(s.interval || "any bars")}</span></div>
+      <div>${esc(s.description)}</div>
+      <div class="muted" style="font-size:12px">source: ${esc(s.source || "–")}</div>
+      <div style="font-size:12px"><span class="muted">params:</span> <code>${esc(JSON.stringify(s.params))}</code></div>
+      ${s.notes ? `<details class="help"><summary>Notes</summary><p style="white-space:pre-wrap">${esc(s.notes)}</p></details>` : ""}
+      <div class="row"><a class="btn" href="#/backtest?s=${encodeURIComponent(s.name)}" style="text-decoration:none">Backtest</a><button onclick='editInstance(null,{strategy:${JSON.stringify(s.name)}})'>Paper trade</button></div>
+    </div>`).join("")}</div>`;
+};
+
+// ----------------------------------------------------------------- settings
+pages.settings = async app => {
+  const { text } = await api("/api/config");
+  app.innerHTML = `<h1>Settings</h1><p class="sub">This is <code>configs/instances.yaml</code>. The paper trader re-reads it on every check, so changes apply without a restart.</p>
+    <div class="card"><textarea id="s-text" rows="26" spellcheck="false">${esc(text)}</textarea>
+    <div class="row" style="margin-top:10px"><button class="primary" id="s-save">Save</button><span class="muted">Checked before saving. A backup of the original is kept as instances.yaml.bak.</span></div></div>
+    <div class="card help" style="margin-top:14px"><h2>Help</h2>
+      <details><summary>What do these settings mean?</summary><ul>
+        <li><code>interval</code>: bar size (1d = daily candles, 5m = 5-minute candles).</li>
+        <li><code>allocation</code>: share of the account to use (1.0 = all of it), split across the symbols.</li>
+        <li><code>max_leverage</code>: 1 = no borrowing, 2 = can hold up to 2× the account.</li>
+        <li><code>broker</code>: <code>sim</code> = simulated locally, <code>alpaca</code> = your Alpaca paper account.</li>
+        <li><code>daily_trade_after</code>: daily strategies decide near the close, at this New York time.</li>
+        <li><code>poll_seconds</code>: how often the bot checks prices.</li></ul></details>
+      <details><summary>Open it on my phone / my own domain</summary><p>See <code>docs/CLOUDFLARE.md</code> in the project folder. It shows how to put this dashboard on a subdomain with a login, using a free Cloudflare Tunnel.</p></details>
+    </div>`;
+  $("#s-save").onclick = e => busy(e.currentTarget, async () => { await api("/api/config", { method: "PUT", body: { text: $("#s-text").value } }); toast("Saved"); });
+};
+
+// header market badge on every page
+api("/api/overview").then(setMarket).catch(() => {});
+setInterval(() => api("/api/overview").then(setMarket).catch(() => {}), 60000);
+route();
+</script>
+</body>
+</html>
