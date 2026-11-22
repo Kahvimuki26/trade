@@ -21,14 +21,27 @@ from .autopilot import ACTIVE, COST, PLAYBOOKS, RISK, analyze
 
 MODEL = "claude-opus-5-5"
 PRICE_IN, PRICE_OUT = 4.00 / 1e6, 20.00 / 1e6  # $ per token (Claude Opus 5.5)
+PRICE_CACHE_READ, PRICE_CACHE_WRITE = 0.20 / 1e6, 5.00 / 1e6
+PRICE_SEARCH = 10.00 / 1000  # $ per web search
+BETAS = ["server-side-fallback-2026-07-01"]
+
+NEWS_SYSTEM = """You are the news researcher for a crypto trading bot. Search the web for the most recent \
+news (last 24-48 hours) that could move the prices of the coins you're given: market-wide crypto news, \
+macro events (rates, inflation data, stock market moves), regulation, ETF flows, exchange or protocol \
+hacks, big listings or unlocks, and overall market sentiment. Prefer reputable sources and recent dates.
+
+Then write a short briefing (max ~250 words): one line on the overall market mood, then one or two bullet \
+points per coin with the news that matters and the date. Say plainly when you found nothing important. \
+Don't give trading advice; just report what's happening."""
 ACTIONS = ["buy", "sell", "hold", "stay_out"]
 
 SYSTEM = """You are the trader inside a crypto paper-trading app. The user is a beginner who wants to see \
 whether an AI can trade well. It is play money on real live prices, so make real decisions as if it mattered, \
 but never pretend to know the future.
 
-Each turn you get hourly market data for the coins you may trade, the account, open positions and your own \
-notes from your previous decision. Decide what to do with each coin right now.
+Each turn you get hourly market data for the coins you may trade, the account, open positions, your own \
+notes from your previous decision and, when available, a fresh news briefing. Weigh the news against what \
+the prices are actually doing (news is often already priced in). Decide what to do with each coin right now.
 
 Rules (also enforced in code, so don't try to work around them):
 - Spot only: you can buy and hold coins or be in cash. No shorting, no leverage.
@@ -74,6 +87,17 @@ def schema(coins: list[str]) -> dict:
         "required": ["market_view", "decisions", "note_to_self"],
         "additionalProperties": False,
     }
+
+
+def usage_cost(usage) -> tuple[float, int]:
+    """Dollar cost of one API response, and the number of web searches it ran."""
+    g = lambda name: getattr(usage, name, 0) or 0  # noqa: E731
+    stu = getattr(usage, "server_tool_use", None)
+    searches = (getattr(stu, "web_search_requests", 0) or 0) if stu else 0
+    cost = (g("input_tokens") * PRICE_IN + g("output_tokens") * PRICE_OUT
+            + g("cache_read_input_tokens") * PRICE_CACHE_READ
+            + g("cache_creation_input_tokens") * PRICE_CACHE_WRITE + searches * PRICE_SEARCH)
+    return cost, searches
 
 
 def _r(x, d=2):
@@ -124,7 +148,29 @@ class ClaudeTrader:
     def configured() -> bool:
         return bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"))
 
-    def build_prompt(self, frames: dict, account: dict, risk: str, memory: dict) -> str:
+    def news(self, coins: list[str]) -> tuple[str, float, int]:
+        """Web-search briefing on what's moving these coins. Returns (text, cost, searches)."""
+        tools = [{"type": "web_search_20260209", "name": "web_search", "max_uses": 4}]
+        messages = [{"role": "user", "content": f"Coins: {', '.join(coins)}. Today is "
+                                                f"{pd.Timestamp.now(tz='UTC'):%Y-%m-%d %H:%M} UTC. "
+                                                "Research and write the briefing."}]
+        cost, searches, response = 0.0, 0, None
+        for _ in range(3):  # resume if the server-side search loop pauses
+            response = self.client.beta.messages.create(
+                model=MODEL, max_tokens=16000, betas=BETAS, fallbacks="default", system=NEWS_SYSTEM,
+                output_config={"effort": "medium"}, tools=tools, messages=messages)
+            c, n = usage_cost(response.usage)
+            cost, searches = cost + c, searches + n
+            if response.stop_reason != "pause_turn":
+                break
+            messages = messages[:1] + [{"role": "assistant", "content": response.content}]
+        if response is None or response.stop_reason == "refusal":
+            return "(news unavailable this time)", cost, searches
+        text = "\n".join(b.text for b in response.content if getattr(b, "type", "") == "text").strip()
+        return text or "(no news found)", cost, searches
+
+    def build_prompt(self, frames: dict, account: dict, risk: str, memory: dict, news: str | None = None,
+                     live: bool = False) -> str:
         cfg = RISK[risk]
         briefs = {c: coin_brief(c, df, cfg["lookback_days"]) for c, df in frames.items() if len(df) >= 210}
         payload = {
@@ -138,32 +184,41 @@ class ClaudeTrader:
             "your_note_from_last_time": memory.get("note") or "(first decision)",
             "your_recent_decisions": memory.get("recent", [])[-6:],
         }
-        return ("Here is the current situation. Decide for every coin in `coins`.\n\n"
-                + json.dumps(payload, separators=(",", ":")))
+        if news is not None:
+            payload["news_briefing"] = news
+        head = "Here is the current situation. Decide for every coin in `coins`."
+        if live:
+            head += (" THIS ACCOUNT TRADES REAL MONEY on an exchange. Be selective; fees and small orders "
+                     "matter, and the exchange has a minimum order of about $5.")
+        return head + "\n\n" + json.dumps(payload, separators=(",", ":"))
 
-    def decide(self, frames: dict, account: dict, risk: str, memory: dict) -> dict:
+    def decide(self, frames: dict, account: dict, risk: str, memory: dict, news: bool = False,
+               live: bool = False) -> dict:
         coins = sorted(frames)
-        prompt = self.build_prompt(frames, account, risk, memory)
+        briefing, news_cost, searches = self.news(coins) if news else (None, 0.0, 0)
+        prompt = self.build_prompt(frames, account, risk, memory, briefing, live)
         response = self.client.beta.messages.create(
             model=MODEL,
             max_tokens=16000,
-            betas=["server-side-fallback-2026-07-01"],
+            betas=BETAS,
             fallbacks="default",  # if Claude Opus 5.5 declines, Anthropic retries on a fallback model
             system=SYSTEM,
-            output_config={"effort": "medium", "format": {"type": "json_schema", "schema": schema(coins)}},
+            output_config={"effort": "high", "format": {"type": "json_schema", "schema": schema(coins)}},
             messages=[{"role": "user", "content": prompt}],
         )
-        usage = response.usage
-        cost = (usage.input_tokens or 0) * PRICE_IN + (usage.output_tokens or 0) * PRICE_OUT
+        cost, _ = usage_cost(response.usage)
+        cost += news_cost
         if response.stop_reason == "refusal":
             raise RuntimeError("Claude declined to answer this time; holding positions as they are.")
         if response.stop_reason == "max_tokens":
             raise RuntimeError("Claude's answer was cut off; holding positions as they are.")
-        text = next((b.text for b in response.content if getattr(b, "type", "") == "text"), None)
+        text = next((b.text for b in reversed(response.content) if getattr(b, "type", "") == "text"), None)
         if not text:
             raise RuntimeError("Claude returned no decision; holding positions as they are.")
         data = json.loads(text)
         data["cost"] = cost
+        data["searches"] = searches
+        data["news"] = briefing
         data["model"] = getattr(response, "model", MODEL)
         return data
 

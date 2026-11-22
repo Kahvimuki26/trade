@@ -24,9 +24,16 @@ log = logging.getLogger("tradebot")
 
 
 def make_bots(market=None) -> dict[str, Bot]:
-    """One play-money account per brain, so they can be compared side by side."""
-    return {"autopilot": Bot(market=market, path=Path("data/bot.json"), kind="autopilot"),
+    """One account per trader, so they can be compared side by side. The real-money one only
+    exists when .env has LIVE_TRADING=yes."""
+    from ..live import live_config
+
+    bots = {"autopilot": Bot(market=market, path=Path("data/bot.json"), kind="autopilot"),
             "claude": Bot(market=market, path=Path("data/claude.json"), kind="claude")}
+    cfg = live_config()
+    if cfg:
+        bots["live"] = Bot(market=market, path=Path("data/live.json"), live=cfg)
+    return bots
 
 
 def create_app(bots: dict[str, Bot] | Bot | None = None):
@@ -89,13 +96,19 @@ def create_app(bots: dict[str, Bot] | Bot | None = None):
         return snap
 
     @app.post("/api/start")
-    def start(bot: str | None = None):
+    def start(bot: str | None = None, body: dict = Body(default={})):
         b = pick(bot)
-        if b.kind == "claude" and not b._ai_configured():
+        if b.kind == "live" and (body or {}).get("confirm") != "REAL":
+            raise ValueError("Real-money trading needs confirmation.")
+        if b.kind in ("claude", "live") and not b._ai_configured():
             raise ValueError("Add your Anthropic API key first (ANTHROPIC_API_KEY in the .env file), "
                              "then restart tradebot.")
         b.start()
         return {"running": True}
+
+    @app.post("/api/panic")
+    def panic(bot: str | None = None):
+        return {"sold": pick(bot).panic()}
 
     @app.post("/api/stop")
     def stop(bot: str | None = None):
@@ -105,7 +118,8 @@ def create_app(bots: dict[str, Bot] | Bot | None = None):
     @app.post("/api/settings")
     def settings(body: dict = Body(...), bot: str | None = None):
         pick(bot).update_settings(risk=body.get("risk"), coins=body.get("coins"),
-                                  ai_every_hours=body.get("ai_every_hours"))
+                                  ai_every_hours=body.get("ai_every_hours"), ai_news=body.get("ai_news"),
+                                  ai_daily_budget=body.get("ai_daily_budget"))
         return {"ok": True}
 
     @app.post("/api/reset")
@@ -121,7 +135,7 @@ def create_app(bots: dict[str, Bot] | Bot | None = None):
         from ..sim import simulate
 
         b = pick(bot)
-        if b.kind == "claude":
+        if b.kind in ("claude", "live"):
             raise ValueError("Claude can't be tested on the past: it may remember what prices did, so the result "
                              "would be fake. It can only be judged live.")
         s = b.settings
@@ -208,7 +222,7 @@ def serve(host: str = "127.0.0.1", port: int | None = None, open_browser: bool =
     app = create_app(bots)
     for b in bots.values():
         if b.want_running or (autostart and b.kind == "autopilot"):  # was running when closed -> keep going
-            if b.kind != "claude" or b._ai_configured():
+            if b.kind == "autopilot" or b._ai_configured():
                 b.start()
     url = f"http://{'127.0.0.1' if host in ('0.0.0.0', '::') else host}:{port}"
     print(f"\n  tradebot: {url}\n  Keep this window open. Close it to stop.\n")

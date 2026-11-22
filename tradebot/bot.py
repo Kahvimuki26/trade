@@ -20,8 +20,9 @@ from .portfolio import Portfolio, Trade
 
 log = logging.getLogger("tradebot")
 STATE_FILE = Path("data/bot.json")
-DEFAULT = {"cash": 100.0, "risk": "normal", "coins": ["BTC", "ETH", "SOL"], "ai_every_hours": 1}
-KINDS = {"autopilot": "Autopilot", "claude": "Claude AI"}
+DEFAULT = {"cash": 100.0, "risk": "normal", "coins": ["BTC", "ETH", "SOL"], "ai_every_hours": 2,
+           "ai_news": True, "ai_daily_budget": 5.0}
+KINDS = {"autopilot": "Autopilot", "claude": "Claude AI", "live": "Claude, REAL MONEY"}
 POLL_SECONDS = 60
 CANDLES = 24 * 21 + 120  # enough for the longest lookback + indicator warm-up
 
@@ -32,11 +33,13 @@ def now_utc() -> pd.Timestamp:
 
 class Bot:
     def __init__(self, market: MarketData | None = None, path: Path = STATE_FILE, kind: str = "autopilot",
-                 trader=None):
+                 trader=None, live: dict | None = None, exchange=None):
         self.market = market or Binance()
         self.path = Path(path)
-        self.kind = kind
-        if kind == "claude":
+        self.kind = "live" if live else kind
+        self.live_cfg = live
+        self._exchange = exchange
+        if kind == "claude" or live:
             from .ai import ClaudeTrader
 
             self.trader = trader or ClaudeTrader()
@@ -50,8 +53,15 @@ class Bot:
     def load(self) -> None:
         s = json.loads(self.path.read_text()) if self.path.exists() else {}
         self.settings = {**DEFAULT, **s.get("settings", {})}
-        self.portfolio = (Portfolio.from_dict(s["portfolio"]) if "portfolio" in s
-                          else Portfolio(cash=self.settings["cash"], slippage_bps=COST_BPS))
+        if self.live_cfg:
+            from .live import LivePortfolio
+
+            self.settings["cash"] = self.live_cfg["budget"]
+            self.portfolio = LivePortfolio.restore(self._exchange, self.live_cfg["quote"], self.live_cfg["budget"],
+                                                   self.live_cfg["max_loss"], s.get("portfolio"))
+        else:
+            self.portfolio = (Portfolio.from_dict(s["portfolio"]) if "portfolio" in s
+                              else Portfolio(cash=self.settings["cash"], slippage_bps=COST_BPS))
         self.brain = Brain.from_dict(s.get("brain", {"risk": self.settings["risk"]}))
         self.events: list[dict] = s.get("events", [])
         self.equity: list[list] = s.get("equity", [])
@@ -60,7 +70,8 @@ class Bot:
         self.started: str | None = s.get("started")
         self.want_running: bool = s.get("running", False)
         self.prices: dict = s.get("prices", {})
-        self.ai = s.get("ai", {"memory": {}, "cost": 0.0, "view": None, "last": None, "calls": 0})
+        self.ai = {"memory": {}, "cost": 0.0, "view": None, "last": None, "calls": 0, "days": {}, "news": None,
+                   **s.get("ai", {})}
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -81,24 +92,44 @@ class Bot:
 
     # ------------------------------------------------------------------ control
     def reset(self, cash: float | None = None, risk: str | None = None, coins: list[str] | None = None) -> None:
+        if self.live_cfg and self.portfolio.positions:
+            raise ValueError("Sell everything first (red button), then start over.")
         was_running = self.running
         self.stop()  # outside the lock: the loop thread needs it to finish
         with self.lock:
-            self.settings = {"cash": float(cash or self.settings["cash"]), "risk": risk or self.settings["risk"],
-                             "coins": coins or self.settings["coins"]}
-            self.portfolio = Portfolio(cash=self.settings["cash"], slippage_bps=COST_BPS)
+            self.settings = {**self.settings, "cash": float(cash or self.settings["cash"]),
+                             "risk": risk or self.settings["risk"], "coins": coins or self.settings["coins"]}
+            if self.live_cfg:
+                from .live import LivePortfolio
+
+                self.settings["cash"] = self.live_cfg["budget"]
+                self.portfolio = LivePortfolio(self._exchange, self.live_cfg["quote"], self.live_cfg["budget"],
+                                               self.live_cfg["max_loss"])
+            else:
+                self.portfolio = Portfolio(cash=self.settings["cash"], slippage_bps=COST_BPS)
             self.brain = Brain(self.settings["risk"])
             self.events, self.equity, self.views, self.last_decision, self.started = [], [], {}, None, None
             self.ai = {"memory": {}, "cost": self.ai.get("cost", 0.0), "view": None, "last": None,
-                       "calls": self.ai.get("calls", 0)}  # keep the running API cost total
+                       "calls": self.ai.get("calls", 0), "days": self.ai.get("days", {}),
+                       "news": None}  # keep the running API cost totals
             self.event("info", f"Fresh start with ${self.settings['cash']:,.2f} of play money.")
             self.save()
         if was_running:
             self.start()
 
     def update_settings(self, risk: str | None = None, coins: list[str] | None = None,
-                        ai_every_hours: int | None = None) -> None:
+                        ai_every_hours: int | None = None, ai_news: bool | None = None,
+                        ai_daily_budget: float | None = None) -> None:
         with self.lock:
+            if ai_news is not None:
+                self.settings["ai_news"] = bool(ai_news)
+                self.event("info", f"News research {'on' if ai_news else 'off'}.")
+            if ai_daily_budget is not None:
+                b = float(ai_daily_budget)
+                if not 0.5 <= b <= 100:
+                    raise ValueError("Daily budget must be between $0.50 and $100")
+                self.settings["ai_daily_budget"] = b
+                self.event("info", f"Claude's daily API budget: ${b:,.2f}.")
             if ai_every_hours is not None:
                 if int(ai_every_hours) not in (1, 2, 4, 8):
                     raise ValueError("Pick 1, 2, 4 or 8 hours")
@@ -125,7 +156,13 @@ class Bot:
             now = now_utc()
             coins = self.settings["coins"]
             held_outside = [c for c in self.portfolio.positions if c not in coins]
-            prices = self.market.prices(coins + held_outside)
+            if self.live_cfg:
+                self._ensure_exchange()
+                self.portfolio.check_coins(coins)
+                self.portfolio.reconcile()
+                prices = self.portfolio.live_prices(coins + held_outside)
+            else:
+                prices = self.market.prices(coins + held_outside)
             self.prices = {**self.prices, **prices}
             cfg = RISK[self.settings["risk"]]
 
@@ -136,6 +173,17 @@ class Bot:
                     self.brain.on_stop(c, now)
                     self.event("sell", f"Stop-loss: sold {c} at ${t.price:,.4g} ({_money(t.realized_pnl)}). "
                                        f"Taking a {6}-hour break from {c}.", c)
+
+            # 1b) real money: loss limit -> sell everything and stop
+            if self.live_cfg and self.portfolio.loss_limit_hit(self.prices):
+                self.portfolio.sell_all(prices, now.isoformat())
+                self._flush_notes()
+                self.event("sell", f"LOSS LIMIT: the account fell more than {self.live_cfg['max_loss']:.0%} below "
+                                   f"${self.live_cfg['budget']:,.2f}. Sold everything and stopped.")
+                self.want_running = False
+                self._stop.set()
+                self.save()
+                return
 
             # 2) coins removed from the list get sold
             for c in held_outside:
@@ -148,7 +196,7 @@ class Bot:
             latest = max(df.index[-1] for df in frames.values() if len(df))
             if (force_decision or self.last_decision != latest.isoformat()) and self._ai_due(now, force_decision):
                 self.last_decision = latest.isoformat()
-                if self.kind == "claude":
+                if self.kind in ("claude", "live"):
                     try:
                         self.decide_ai(frames, prices, now)
                     except Exception as e:  # keep positions, stops keep working, try again next hour
@@ -158,6 +206,7 @@ class Bot:
                 else:
                     self.decide(frames, prices, now)
 
+            self._flush_notes()
             for c, v in self.views.items():
                 if c in prices:
                     v["price"] = prices[c]
@@ -166,8 +215,21 @@ class Bot:
                 self.equity.append([now.isoformat(timespec="seconds"), eq])
             self.save()
 
+    def spent_today(self, now: pd.Timestamp | None = None) -> float:
+        return self.ai.get("days", {}).get((now or now_utc()).strftime("%Y-%m-%d"), 0.0)
+
     def _ai_due(self, now: pd.Timestamp, force: bool) -> bool:
-        if self.kind != "claude" or force or not self.ai.get("last"):
+        if self.kind == "autopilot":
+            return True
+        calls = self.ai.get("calls", 0)
+        expected_next = self.ai.get("cost", 0.0) / calls if calls else 0.0  # typical cost of one decision
+        if self.spent_today(now) + expected_next > self.settings["ai_daily_budget"] + 1e-9:
+            if self.ai.get("budget_note") != now.strftime("%Y-%m-%d"):
+                self.ai["budget_note"] = now.strftime("%Y-%m-%d")
+                self.event("info", f"Claude's daily budget (${self.settings['ai_daily_budget']:,.2f}) is used up. "
+                                   "No new decisions until midnight UTC; stop-losses keep running.")
+            return False
+        if force or not self.ai.get("last"):
             return True
         return now - pd.Timestamp(self.ai["last"]) >= pd.Timedelta(hours=self.settings["ai_every_hours"],
                                                                     minutes=-5)
@@ -190,8 +252,12 @@ class Bot:
                    "closed_trades": len(closed), "winning_trades": sum(p > 0 for p in closed),
                    "positions": positions}
         data = self.trader.decide({c: frames[c] for c in coins}, account, self.settings["risk"],
-                                  self.ai.get("memory", {}))
+                                  self.ai.get("memory", {}), news=self.settings["ai_news"], live=bool(self.live_cfg))
         self.ai["cost"] = self.ai.get("cost", 0.0) + data["cost"]
+        day = now.strftime("%Y-%m-%d")
+        self.ai.setdefault("days", {})[day] = self.ai["days"].get(day, 0.0) + data["cost"]
+        self.ai["days"] = dict(sorted(self.ai["days"].items())[-14:])
+        self.ai["news"] = data.get("news")
         self.ai["calls"] = self.ai.get("calls", 0) + 1
         self.ai["last"] = now.isoformat(timespec="seconds")
         self.ai["view"] = data.get("market_view")
@@ -205,6 +271,7 @@ class Bot:
                 d["reason"] += " (Blocked: this coin hit its stop-loss recently, 6-hour break.)"
         trades = self.portfolio.rebalance(targets, prices, now.isoformat(timespec="seconds"),
                                           weights=weights, max_leverage=1.0)
+        self._flush_notes()
         by_coin = {d["coin"]: d for d in decisions}
         for t in trades:
             d = by_coin.get(t.symbol, {})
@@ -296,8 +363,8 @@ class Bot:
         self._thread = None
 
     def _loop(self) -> None:
-        if self.kind == "claude":
-            self.event("info", f"Claude started. Stop-losses are checked every minute; Claude decides every "
+        if self.kind in ("claude", "live"):
+            self.event("info", f"{'REAL MONEY: ' if self.live_cfg else ''}Claude started. Stop-losses are checked every minute; Claude decides every "
                                f"{self.settings['ai_every_hours']} hour(s).")
         else:
             self.event("info", "Bot started. It checks prices every minute and re-decides every hour.")
@@ -315,6 +382,37 @@ class Bot:
             if not self.want_running:
                 self.event("info", "Bot paused.")
             self.save()
+
+    # ------------------------------------------------------------------ real money
+    def _ensure_exchange(self) -> None:
+        if self.portfolio.ex is None:
+            from .live import connect
+
+            self._exchange = connect(self.live_cfg)
+            self.portfolio.ex = self._exchange
+
+    def _flush_notes(self) -> None:
+        for n in getattr(self.portfolio, "notes", [])[:]:
+            self.event("info", n)
+        if hasattr(self.portfolio, "notes"):
+            self.portfolio.notes.clear()
+
+    def panic(self) -> int:
+        """Sell everything the bot holds and stop. Returns the number of sells."""
+        self.stop()
+        with self.lock:
+            if self.live_cfg:
+                self._ensure_exchange()
+                prices = self.portfolio.live_prices(list(self.portfolio.positions))
+            else:
+                prices = self.market.prices(list(self.portfolio.positions)) if self.portfolio.positions else {}
+            trades = [self.portfolio.order(c, -q, prices.get(c, self.portfolio.avg_price[c]), now_utc().isoformat())
+                      for c, q in list(self.portfolio.positions.items())]
+            self._flush_notes()
+            n = len([t for t in trades if t])
+            self.event("sell", f"Sell everything pressed: sold {n} position(s) and stopped.")
+            self.save()
+            return n
 
     # ------------------------------------------------------------------ view
     def _ai_configured(self) -> bool:
@@ -346,7 +444,10 @@ class Bot:
                 "trades": len(closed), "wins": sum(p > 0 for p in closed),
                 "kind": self.kind, "name": KINDS[self.kind],
                 "ai": {"cost": self.ai.get("cost", 0.0), "calls": self.ai.get("calls", 0), "view": self.ai.get("view"),
-                       "last": self.ai.get("last"), "configured": self._ai_configured()} if self.kind == "claude" else None,
+                       "last": self.ai.get("last"), "configured": self._ai_configured(),
+                       "today": self.spent_today(), "news": self.ai.get("news")} if self.kind != "autopilot" else None,
+                "live": {k: v for k, v in self.live_cfg.items() if k not in ("key", "secret", "password")}
+                if self.live_cfg else None,
             }
 
 

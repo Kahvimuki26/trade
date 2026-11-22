@@ -33,6 +33,15 @@ The two tiles at the top are two separate play-money accounts, so you can compar
   dashboard shows the running total. Claude can't be "tested on the past" fairly, because it may
   remember what prices did, so compare it live against the Autopilot.
 
+**News + deeper thinking:** before each decision Claude searches the web for fresh crypto news
+(market mood, regulation, ETF flows, hacks...) and then decides at high effort. Default: every 2 hours,
+with a **daily budget** (default $5) that hard-caps Claude's API spend.
+
+**Real money (optional, off by default):** a third tile, "Claude, REAL MONEY", appears when `.env` has
+`LIVE_TRADING=yes` and exchange API keys. It places real orders on your exchange but never uses more than
+`LIVE_BUDGET`, only sells what it bought, sells everything and stops at a loss limit, and has a red
+"Sell everything & stop" button. **Read [docs/REAL_MONEY.md](docs/REAL_MONEY.md) first.**
+
 ## How the autopilot decides
 
 | Playbook | What it does |
@@ -62,7 +71,8 @@ data/bot.json, claude.json   each trader's money, settings and history (never ov
 .env                         ANTHROPIC_API_KEY (for Claude), optional TRADEBOT_PORT, TRADEBOT_PASSWORD
 tradebot/
   autopilot.py   playbooks + the brain that picks between them
-  ai.py          Claude as the trader (prompt, structured answer, safety limits)
+  ai.py          Claude as the trader (news research, decision, safety limits)
+  live.py        real-money orders on an exchange (ccxt), budget + loss limits
   bot.py         the live paper-trading loop
   sim.py         "test it on the past"
   data.py        Binance prices (+ made-up prices for tests)

@@ -90,10 +90,17 @@ input { font: inherit; color: var(--text); background: var(--panel); border: 1px
 .barrow { display: grid; grid-template-columns: 120px 1fr 40px; gap: 8px; align-items: center; font-size: 12.5px; }
 .barrow .track { height: 8px; background: var(--panel-2); border-radius: 4px; overflow: hidden; }
 .barrow .fill { height: 100%; background: var(--accent); border-radius: 4px; }
-.switcher { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.switcher { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
 .bt { text-align: left; border: 2px solid var(--border); background: var(--panel); border-radius: 14px; padding: 12px 16px; cursor: pointer; display: grid; gap: 2px; font-weight: 400; }
 .bt:hover { background: var(--panel); border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); }
 .bt.on { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-2); }
+.bt.real { border-color: color-mix(in srgb, var(--down) 45%, var(--border)); }
+.bt.real.on { border-color: var(--down); box-shadow: 0 0 0 3px color-mix(in srgb, var(--down) 20%, transparent); }
+.realbar { background: color-mix(in srgb, var(--down) 10%, var(--panel)); border: 1px solid color-mix(in srgb, var(--down) 40%, var(--border)); color: var(--text); border-radius: 12px; padding: 10px 14px; font-size: 13.5px; }
+button.danger { background: var(--down); border-color: var(--down); color: #fff; }
+details.news summary { cursor: pointer; color: var(--accent); font-weight: 600; margin-top: 6px; }
+details.news div { white-space: pre-wrap; margin-top: 6px; font-size: 13px; }
+.switch-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
 .bt .t { display: flex; justify-content: space-between; align-items: center; font-weight: 700; font-size: 14px; }
 .bt .v { font-size: 20px; font-weight: 750; font-variant-numeric: tabular-nums; }
 .aiview { margin-top: 12px; background: var(--panel-2); border-radius: 10px; padding: 10px 12px; font-size: 13.5px; }
@@ -120,13 +127,14 @@ dialog::backdrop { background: rgba(0,0,0,.5); }
 <header><div class="bar">
   <div class="logo"><svg width="24" height="24" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="var(--accent)"/><path d="M7 21l6-7 5 4 7-9" stroke="white" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>tradebot <small>crypto autopilot</small></div>
   <div class="spacer"></div>
-  <span class="pill hide-sm" title="Everything here is play money on real prices">paper money</span>
+  <span class="pill hide-sm" id="moneypill" title="Play money on real prices">paper money</span>
   <button class="small" id="how">How it works</button>
   <button class="small" id="theme" aria-label="Light / dark" style="display:inline-flex;padding:6px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></button>
 </div></header>
 <div id="update-bar"></div>
 <main>
   <div class="switcher" id="switcher"></div>
+  <div id="realbar"></div>
   <section class="card hero">
     <div>
       <div class="muted" style="font-weight:600">Balance</div>
@@ -136,7 +144,7 @@ dialog::backdrop { background: rgba(0,0,0,.5); }
       <div id="err" class="err"></div>
       <div id="intro"></div>
     </div>
-    <div><button class="big primary" id="go">Start</button></div>
+    <div style="display:grid;gap:10px"><button class="big primary" id="go">Start</button><button class="big danger" id="panic" style="display:none">Sell everything &amp; stop</button></div>
   </section>
 
   <section class="card"><div class="row" style="justify-content:space-between"><h2 style="margin:0">Balance over time</h2><span class="muted" style="font-size:12px" id="since"></span></div><div id="chart" style="margin-top:10px"></div></section>
@@ -151,8 +159,12 @@ dialog::backdrop { background: rgba(0,0,0,.5); }
     <div class="settings">
       <div><h3>Risk</h3><div class="seg" id="risk"></div><div class="blurb" id="risk-blurb"></div></div>
       <div><h3>Coins it may trade</h3><div class="chips" id="chips"></div><div class="blurb">The bot picks the best of these each hour.</div></div>
-      <div id="ai-freq-box" style="display:none"><h3>Claude decides every</h3><div class="seg" id="ai-freq"></div><div class="blurb" id="ai-freq-blurb"></div></div>
-      <div><h3>Start over</h3><div class="row"><span>$</span><input id="cash" type="number" min="1" step="1" style="width:110px"><button id="reset">Start over</button></div>
+      <div id="ai-freq-box" style="display:none"><h3>Claude decides every</h3><div class="seg" id="ai-freq"></div><div class="blurb" id="ai-freq-blurb"></div>
+        <div class="switch-row"><input type="checkbox" id="ai-news" style="width:16px;height:16px"><label for="ai-news" style="display:inline;cursor:pointer;font-size:13.5px;color:var(--text)"><b>Read the news</b> (web search before each decision)</label></div>
+        <div class="switch-row"><span>Daily budget $</span><input id="ai-budget" type="number" min="0.5" step="0.5" style="width:80px"><button class="small" id="ai-budget-save">Save</button></div>
+        <div class="blurb" id="ai-today"></div></div>
+      <div id="reset-box">
+<h3>Start over</h3><div class="row"><span>$</span><input id="cash" type="number" min="1" step="1" style="width:110px"><button id="reset">Start over</button></div>
         <div class="blurb">Wipes the history and starts fresh with this much play money.</div></div>
     </div>
   </section>
@@ -244,11 +256,17 @@ function spark(vals) {
 // ----------------------------------------------------------------- render
 function render(s) {
   S = s;
-  const isAI = s.kind === "claude";
+  const isAI = s.kind === "claude" || s.kind === "live";
   $("#switcher").innerHTML = Object.entries(s.bots).map(([k, b]) => { const r = b.balance / b.start_cash - 1;
-    return `<button class="bt ${k === BOT ? "on" : ""}" data-bot="${k}"><span class="t">${esc(b.name)} <span class="pill ${b.running ? "good" : ""}">${b.running ? "running" : b.started ? "paused" : "not started"}</span></span>
+    return `<button class="bt ${k === BOT ? "on" : ""} ${k === "live" ? "real" : ""}" data-bot="${k}"><span class="t">${esc(b.name)} <span class="pill ${b.running ? (k === "live" ? "bad" : "good") : ""}">${b.running ? "running" : b.started ? "paused" : "not started"}</span></span>
       <span class="v">${money(b.balance)} <span class="${cls(r)}" style="font-size:14px">${pct(r)}</span></span>
-      <span class="muted" style="font-size:12px">${k === "claude" ? "Claude decides what to trade" : "Rules that pick their own playbook"}</span></button>`; }).join("");
+      <span class="muted" style="font-size:12px">${k === "live" ? "Real orders on your exchange" : k === "claude" ? "Claude decides (play money)" : "Rules that pick their own playbook"}</span></button>`; }).join("");
+  if (!s.bots[BOT]) { BOT = "autopilot"; try { localStorage.setItem("bot", BOT); } catch {} }
+  const isLive = s.kind === "live";
+  $("#realbar").innerHTML = isLive ? `<div class="realbar"><b>REAL MONEY on ${esc(s.live.exchange)}</b>: uses at most <b>${money(s.live.budget)} ${esc(s.live.quote)}</b> of your balance${s.live.testnet ? " (TESTNET)" : ""}. Sells everything and stops if it falls ${Math.round(s.live.max_loss * 100)}% below that.
+    <b>Keep this computer on and awake</b>: stop-losses only run while tradebot is open.</div>` : "";
+  $("#panic").style.display = isLive ? "" : "none";
+  $("#reset-box").style.display = isLive ? "none" : "";
   document.title = `${s.name} · tradebot`;
   $("#balance").textContent = money(s.balance);
   $("#sub").innerHTML = `<span class="${cls(s.total_return)}">${pct(s.total_return)} <span class="muted">since start (${money(s.start_cash)})</span></span>
@@ -264,8 +282,9 @@ function render(s) {
       <li>In the tradebot folder, open the file <code>.env</code> (or create it) and add the line <code>ANTHROPIC_API_KEY=</code> followed by your key.</li>
       <li>Close the tradebot window and open <code>start.bat</code> again. Then press Start here.</li></ol>
       <div class="muted" style="margin-top:6px">Each decision costs a few cents. You'll see the running total here.</div></div>`
-    : !s.started ? `<div class="intro"><b>Welcome!</b> ${isAI ? "Here <b>Claude</b> (Anthropic's AI) makes the trading decisions every hour, with a reason for each one." : "This bot decides by itself which coins to hold and how."} It's <b>play money on real prices</b>. Pick coins and risk below, then press <b>Start</b>. Keep this window open; it runs 24/7.</div>` : "";
-  if (isAI && ai.configured) $("#intro").innerHTML += `<div class="aiview">${ai.view ? `<b>Claude's view:</b> ${esc(ai.view)}<br>` : ""}<span class="muted">Claude has cost <b>${money(ai.cost)}</b> so far over ${ai.calls} decision${ai.calls === 1 ? "" : "s"}${ai.calls ? ` (about ${money(ai.cost / ai.calls)} each)` : ""}${ai.last ? ` · last one ${ago(ai.last)}` : ""}.</span></div>`;
+    : !s.started ? `<div class="intro"><b>Welcome!</b> ${isAI ? `Here <b>Claude</b> (Anthropic's AI) makes the trading decisions every ${s.settings.ai_every_hours} h${s.settings.ai_news ? ", after reading the latest news" : ""}, with a reason for each one.` : "This bot decides by itself which coins to hold and how."} ${s.kind === "live" ? "This one places <b>real orders with real money</b>." : "It's <b>play money on real prices</b>."} Pick coins and risk below, then press <b>Start</b>. Keep this window open; it runs 24/7.</div>` : "";
+  const mp = $("#moneypill"); mp.textContent = s.kind === "live" ? "REAL MONEY" : "paper money"; mp.className = "pill hide-sm" + (s.kind === "live" ? " bad" : "");
+  if (isAI && ai.configured) $("#intro").innerHTML += `<div class="aiview">${ai.view ? `<b>Claude's view:</b> ${esc(ai.view)}<br>` : ""}${ai.news ? `<details class="news"><summary>News Claude read last time</summary><div>${esc(ai.news)}</div></details>` : ""}<span class="muted">Claude has cost <b>${money(ai.cost)}</b> so far over ${ai.calls} decision${ai.calls === 1 ? "" : "s"}${ai.calls ? ` (about ${money(ai.cost / ai.calls)} each)` : ""}${ai.last ? ` · last one ${ago(ai.last)}` : ""}.</span></div>`;
   const go = $("#go"); go.textContent = s.running ? "Pause" : "Start"; go.className = "big" + (s.running ? "" : " primary");
   $("#since").textContent = s.started ? `since ${fmtTime(s.started)}` : "";
   lineChart($("#chart"), [{ name: "Balance", color: "var(--accent)", fill: true, points: s.equity.length ? [...s.equity, [new Date().toISOString(), s.balance]] : [] }]);
@@ -297,8 +316,11 @@ function render(s) {
   $("#ai-freq-box").style.display = isAI ? "" : "none";
   if (isAI) {
     $("#ai-freq").innerHTML = [1, 2, 4, 8].map(h => `<button data-h="${h}" class="${s.settings.ai_every_hours === h ? "on" : ""}">${h} h</button>`).join("");
-    const each = ai.calls ? ai.cost / ai.calls : 0.06;
-    $("#ai-freq-blurb").textContent = `About ${money(each * 24 / s.settings.ai_every_hours)} a day in Claude API costs${ai.calls ? "" : " (estimate)"}. Stop-losses are still checked every minute.`;
+    const each = ai.calls ? ai.cost / ai.calls : (s.settings.ai_news ? 0.3 : 0.12);
+    $("#ai-freq-blurb").textContent = `About ${money(each * 24 / s.settings.ai_every_hours)} a day in Claude API costs${ai.calls ? "" : " (estimate)"}, capped by the daily budget. Stop-losses are still checked every minute.`;
+    $("#ai-news").checked = !!s.settings.ai_news;
+    if (document.activeElement !== $("#ai-budget")) $("#ai-budget").value = s.settings.ai_daily_budget;
+    $("#ai-today").innerHTML = `Spent today: <b>${money(ai.today)}</b> of ${money(s.settings.ai_daily_budget)}. When the budget runs out it stops deciding until midnight (UTC); stop-losses keep running.`;
   }
   $("#test-card").style.display = isAI ? "none" : "";
   $("#coins-sub").textContent = isAI ? "what Claude decided for each, and why" : "what the autopilot thinks of each";
@@ -310,7 +332,19 @@ $("#switcher").onclick = e => { const b = e.target.closest("[data-bot]"); if (!b
   BOT = b.dataset.bot; try { localStorage.setItem("bot", BOT); } catch {} $("#test-out").innerHTML = ""; refresh(); };
 $("#ai-freq").onclick = async e => { const b = e.target.closest("[data-h]"); if (!b) return;
   try { await api("/api/settings", { method: "POST", body: { ai_every_hours: +b.dataset.h } }); refresh(); } catch (er) { toast(er.message, true); } };
-$("#go").onclick = e => busy(e.currentTarget, async () => { await api(S.running ? "/api/stop" : "/api/start", { method: "POST" }); setTimeout(refresh, S.running ? 800 : 2500); toast(S.running ? "Paused" : "Started. First decision in a few seconds."); });
+$("#ai-news").onchange = async e => { try { await api("/api/settings", { method: "POST", body: { ai_news: e.target.checked } }); refresh(); } catch (er) { toast(er.message, true); } };
+$("#ai-budget-save").onclick = async () => { try { await api("/api/settings", { method: "POST", body: { ai_daily_budget: Number($("#ai-budget").value) } }); toast("Budget saved"); refresh(); } catch (er) { toast(er.message, true); } };
+$("#panic").onclick = e => { if (!confirm("Sell everything this bot holds right now (real market orders) and stop it?")) return;
+  busy(e.currentTarget, async () => { const r = await api("/api/panic", { method: "POST" }); toast(`Sold ${r.sold} position(s) and stopped.`); refresh(); }); };
+$("#go").onclick = e => {
+  let body;
+  if (S.kind === "live" && !S.running) {
+    const typed = prompt(`This trades REAL money (up to ${money(S.live.budget)} ${S.live.quote} on ${S.live.exchange}). You can lose it.\n\nType REAL to start:`);
+    if ((typed || "").trim().toUpperCase() !== "REAL") { toast("Not started."); return; }
+    body = { confirm: "REAL" };
+  }
+  busy(e.currentTarget, async () => { await api(S.running ? "/api/stop" : "/api/start", { method: "POST", body }); setTimeout(refresh, S.running ? 800 : 2500); toast(S.running ? "Paused" : "Started. First decision in a few seconds."); });
+};
 $("#risk").onclick = async e => { const b = e.target.closest("[data-risk]"); if (!b) return; try { await api("/api/settings", { method: "POST", body: { risk: b.dataset.risk } }); toast(`Risk: ${b.textContent}. Applies from the next decision.`); refresh(); } catch (er) { toast(er.message, true); } };
 $("#chips").onclick = async e => { const b = e.target.closest("[data-coin]"); if (!b) return;
   const coins = new Set(S.settings.coins); coins.has(b.dataset.coin) ? coins.delete(b.dataset.coin) : coins.add(b.dataset.coin);

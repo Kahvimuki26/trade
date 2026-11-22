@@ -61,9 +61,10 @@ class FakeTrader:
     def __init__(self, data):
         self.data, self._client = data, object()
 
-    def decide(self, frames, account, risk, memory):
+    def decide(self, frames, account, risk, memory, news=False, live=False):
         self.seen = (account, memory)
-        return {**self.data, "cost": 0.05}
+        self.flags = (news, live)
+        return {**self.data, "cost": 0.05, "news": "Big news." if news else None}
 
 
 def test_claude_bot_trades_and_remembers(market, tmp_path):
@@ -112,3 +113,38 @@ def test_web_claude_rules(market, tmp_path, monkeypatch):
     assert "remember" in c.post("/api/test?bot=claude", json={"days": 30}).json()["error"]
     assert c.post("/api/settings?bot=claude", json={"ai_every_hours": 3}).status_code == 400
     assert c.get("/api/state?bot=nope").status_code == 400
+
+
+def test_news_call_then_decision(market):
+    class TwoStep(FakeClient):
+        def create(self, **kw):
+            self.calls.append(kw)
+            if kw.get("tools"):  # the news call
+                stop = "pause_turn" if len(self.calls) == 1 else "end_turn"
+                return NS(stop_reason=stop, model=kw["model"],
+                          usage=NS(input_tokens=20000, output_tokens=800, server_tool_use=NS(web_search_requests=2)),
+                          content=[NS(type="text", text="BTC: ETF inflows (Nov 21).")])
+            return super().create(**kw)
+
+    fake = TwoStep(answer(BTC=("hold", 0)))
+    data = ClaudeTrader(fake).decide({"BTC": market.candles("BTC", 600)}, {}, "normal", {}, news=True)
+    news_calls = [c for c in fake.calls if c.get("tools")]
+    assert len(news_calls) == 2  # paused once, resumed
+    assert news_calls[0]["tools"][0]["type"] == "web_search_20260209"
+    assert news_calls[1]["messages"][-1]["role"] == "assistant"  # resume = resend the paused turn
+    decision = [c for c in fake.calls if not c.get("tools")][0]
+    assert decision["output_config"]["effort"] == "high" and "ETF inflows" in decision["messages"][0]["content"]
+    assert data["searches"] == 4 and data["news"].startswith("BTC")
+    assert data["cost"] == pytest.approx(2 * (20000 * 4e-6 + 800 * 20e-6 + 0.02) + 4000 * 4e-6 + 1500 * 20e-6)
+
+
+def test_daily_budget_stops_decisions(market, tmp_path):
+    trader = FakeTrader(answer(BTC=("stay_out", 0)))
+    bot = Bot(market=market, path=tmp_path / "c.json", kind="claude", trader=trader)
+    bot.update_settings(ai_daily_budget=0.5, ai_every_hours=1)
+    for _ in range(15):
+        bot.last_decision, bot.ai["last"] = None, None
+        bot.tick()
+    assert bot.ai["calls"] == 10  # 10 x $0.05 = $0.50, then it stops for the day
+    assert any("daily budget" in e["text"] for e in bot.events)
+    assert trader.flags == (True, False)  # news on by default
