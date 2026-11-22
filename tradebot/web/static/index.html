@@ -90,6 +90,16 @@ input { font: inherit; color: var(--text); background: var(--panel); border: 1px
 .barrow { display: grid; grid-template-columns: 120px 1fr 40px; gap: 8px; align-items: center; font-size: 12.5px; }
 .barrow .track { height: 8px; background: var(--panel-2); border-radius: 4px; overflow: hidden; }
 .barrow .fill { height: 100%; background: var(--accent); border-radius: 4px; }
+.switcher { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.bt { text-align: left; border: 2px solid var(--border); background: var(--panel); border-radius: 14px; padding: 12px 16px; cursor: pointer; display: grid; gap: 2px; font-weight: 400; }
+.bt:hover { background: var(--panel); border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); }
+.bt.on { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-2); }
+.bt .t { display: flex; justify-content: space-between; align-items: center; font-weight: 700; font-size: 14px; }
+.bt .v { font-size: 20px; font-weight: 750; font-variant-numeric: tabular-nums; }
+.aiview { margin-top: 12px; background: var(--panel-2); border-radius: 10px; padding: 10px 12px; font-size: 13.5px; }
+.setup { margin-top: 12px; border: 1px dashed var(--accent); border-radius: 12px; padding: 12px 14px; font-size: 13.5px; }
+.setup ol { margin: 6px 0 0; padding-left: 20px; display: grid; gap: 4px; }
+code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-size: 12.5px; }
 #update-bar { background: var(--accent); color: #fff; }
 #update-bar .inner { max-width: 1180px; margin: 0 auto; padding: 8px 16px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 #update-bar button { background: #fff; color: var(--accent); border-color: #fff; }
@@ -116,6 +126,7 @@ dialog::backdrop { background: rgba(0,0,0,.5); }
 </div></header>
 <div id="update-bar"></div>
 <main>
+  <div class="switcher" id="switcher"></div>
   <section class="card hero">
     <div>
       <div class="muted" style="font-weight:600">Balance</div>
@@ -131,7 +142,7 @@ dialog::backdrop { background: rgba(0,0,0,.5); }
   <section class="card"><div class="row" style="justify-content:space-between"><h2 style="margin:0">Balance over time</h2><span class="muted" style="font-size:12px" id="since"></span></div><div id="chart" style="margin-top:10px"></div></section>
 
   <div class="cols">
-    <section class="card"><div class="row" style="justify-content:space-between;margin-bottom:12px"><h2 style="margin:0">Coins</h2><span class="muted" style="font-size:12px">what the autopilot thinks of each</span></div><div class="coins" id="coins"></div></section>
+    <section class="card"><div class="row" style="justify-content:space-between;margin-bottom:12px"><h2 style="margin:0">Coins</h2><span class="muted" style="font-size:12px" id="coins-sub">what the autopilot thinks of each</span></div><div class="coins" id="coins"></div></section>
     <section class="card"><h2>What the bot did</h2><div class="feed" id="feed"></div></section>
   </div>
 
@@ -140,12 +151,13 @@ dialog::backdrop { background: rgba(0,0,0,.5); }
     <div class="settings">
       <div><h3>Risk</h3><div class="seg" id="risk"></div><div class="blurb" id="risk-blurb"></div></div>
       <div><h3>Coins it may trade</h3><div class="chips" id="chips"></div><div class="blurb">The bot picks the best of these each hour.</div></div>
+      <div id="ai-freq-box" style="display:none"><h3>Claude decides every</h3><div class="seg" id="ai-freq"></div><div class="blurb" id="ai-freq-blurb"></div></div>
       <div><h3>Start over</h3><div class="row"><span>$</span><input id="cash" type="number" min="1" step="1" style="width:110px"><button id="reset">Start over</button></div>
         <div class="blurb">Wipes the history and starts fresh with this much play money.</div></div>
     </div>
   </section>
 
-  <section class="card">
+  <section class="card" id="test-card">
     <div class="row" style="justify-content:space-between"><h2 style="margin:0">Test it on the past</h2>
       <div class="row"><div class="seg" id="days"></div><button class="primary" id="test">Run test</button></div></div>
     <p class="muted" style="margin:8px 0 0;font-size:13px">Replays the autopilot hour by hour on real past prices with your current coins, risk and amount, including trading fees. It only ever sees the past, like it would live.</p>
@@ -165,8 +177,10 @@ const cls = v => v == null ? "" : v > 0 ? "up" : v < 0 ? "down" : "";
 const dlg = $("#dlg");
 const COIN_COLORS = { BTC: "#f7931a", ETH: "#627eea", SOL: "#9945ff", BNB: "#f0b90b", XRP: "#23292f", DOGE: "#c2a633", ADA: "#0033ad", AVAX: "#e84142", LINK: "#2a5ada", SUI: "#4da2ff", LTC: "#345d9d", DOT: "#e6007a", TRX: "#ff060a", PEPE: "#3d9c37" };
 let S = null, testDays = 90;
+let BOT = "autopilot"; try { BOT = localStorage.getItem("bot") || "autopilot"; } catch {}
 
 async function api(path, opts = {}) {
+  if (path.startsWith("/api/") && !path.startsWith("/api/update")) path += (path.includes("?") ? "&" : "?") + "bot=" + BOT;
   const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...opts, body: opts.body ? JSON.stringify(opts.body) : undefined });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || data.detail || res.statusText);
@@ -230,14 +244,28 @@ function spark(vals) {
 // ----------------------------------------------------------------- render
 function render(s) {
   S = s;
+  const isAI = s.kind === "claude";
+  $("#switcher").innerHTML = Object.entries(s.bots).map(([k, b]) => { const r = b.balance / b.start_cash - 1;
+    return `<button class="bt ${k === BOT ? "on" : ""}" data-bot="${k}"><span class="t">${esc(b.name)} <span class="pill ${b.running ? "good" : ""}">${b.running ? "running" : b.started ? "paused" : "not started"}</span></span>
+      <span class="v">${money(b.balance)} <span class="${cls(r)}" style="font-size:14px">${pct(r)}</span></span>
+      <span class="muted" style="font-size:12px">${k === "claude" ? "Claude decides what to trade" : "Rules that pick their own playbook"}</span></button>`; }).join("");
+  document.title = `${s.name} · tradebot`;
   $("#balance").textContent = money(s.balance);
   $("#sub").innerHTML = `<span class="${cls(s.total_return)}">${pct(s.total_return)} <span class="muted">since start (${money(s.start_cash)})</span></span>
     <span class="${cls(s.change_24h)}">${pct(s.change_24h)} <span class="muted">24h</span></span>
     ${s.trades ? `<span><span class="muted">trades</span> ${s.trades} · <span class="muted">won</span> ${Math.round(100 * s.wins / s.trades)}%</span>` : ""}`;
-  $("#status").innerHTML = s.running ? `<span class="pill good"><span class="dot on"></span>Running</span> checks prices every minute, re-decides every hour${s.last_decision ? ` · last decision on the ${new Date(s.last_decision).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })} candle` : ""}`
+  $("#status").innerHTML = s.running ? `<span class="pill good"><span class="dot on"></span>Running</span> checks prices every minute, ${isAI ? `Claude decides every ${s.settings.ai_every_hours} h` : "re-decides every hour"}${s.last_decision ? ` · last decision on the ${new Date(s.last_decision).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })} candle` : ""}`
     : `<span class="pill"><span class="dot"></span>Paused</span> ${s.started ? "press Start to continue" : ""}`;
   $("#err").textContent = s.error ? `Problem on the last check: ${s.error}` : "";
-  $("#intro").innerHTML = !s.started ? `<div class="intro"><b>Welcome!</b> This bot trades crypto with <b>play money on real prices</b>. It decides by itself which coins to hold and how. Pick your coins and risk below, then press <b>Start</b>. Keep this window open; it runs 24/7.</div>` : "";
+  const ai = s.ai;
+  $("#intro").innerHTML = (isAI && !ai.configured) ? `<div class="setup"><b>Connect Claude to start the AI trader</b> (about 5 minutes):
+      <ol><li>Go to <b>console.anthropic.com</b>, sign up, and add a little credit under <b>Billing</b> ($5 lasts several days).</li>
+      <li>Open <b>API Keys</b> → <b>Create Key</b>, and copy it.</li>
+      <li>In the tradebot folder, open the file <code>.env</code> (or create it) and add the line <code>ANTHROPIC_API_KEY=</code> followed by your key.</li>
+      <li>Close the tradebot window and open <code>start.bat</code> again. Then press Start here.</li></ol>
+      <div class="muted" style="margin-top:6px">Each decision costs a few cents. You'll see the running total here.</div></div>`
+    : !s.started ? `<div class="intro"><b>Welcome!</b> ${isAI ? "Here <b>Claude</b> (Anthropic's AI) makes the trading decisions every hour, with a reason for each one." : "This bot decides by itself which coins to hold and how."} It's <b>play money on real prices</b>. Pick coins and risk below, then press <b>Start</b>. Keep this window open; it runs 24/7.</div>` : "";
+  if (isAI && ai.configured) $("#intro").innerHTML += `<div class="aiview">${ai.view ? `<b>Claude's view:</b> ${esc(ai.view)}<br>` : ""}<span class="muted">Claude has cost <b>${money(ai.cost)}</b> so far over ${ai.calls} decision${ai.calls === 1 ? "" : "s"}${ai.calls ? ` (about ${money(ai.cost / ai.calls)} each)` : ""}${ai.last ? ` · last one ${ago(ai.last)}` : ""}.</span></div>`;
   const go = $("#go"); go.textContent = s.running ? "Pause" : "Start"; go.className = "big" + (s.running ? "" : " primary");
   $("#since").textContent = s.started ? `since ${fmtTime(s.started)}` : "";
   lineChart($("#chart"), [{ name: "Balance", color: "var(--accent)", fill: true, points: s.equity.length ? [...s.equity, [new Date().toISOString(), s.balance]] : [] }]);
@@ -251,7 +279,7 @@ function render(s) {
     return `<div class="coin ${h ? "holding" : ""}">
       <div class="coin-top"><div class="sym" style="background:${COIN_COLORS[c] || "var(--accent)"}">${esc(c.slice(0, 4))}</div>
         <div><div class="coin-name">${esc(c)} ${status}</div>
-          <div class="row" style="gap:6px;margin-top:3px">${v ? `<span class="pill accent" title="${esc(s.playbooks[v.playbook]?.what || "")}">${esc(v.label)}</span><span class="pill">${esc(v.mood)}</span>` : ""}</div></div>
+          <div class="row" style="gap:6px;margin-top:3px">${v ? `<span class="pill accent" title="${esc(s.playbooks[v.playbook]?.what || "")}">${esc(v.label)}</span>${v.confidence ? `<span class="pill">${esc(v.confidence)} confidence</span>` : ""}<span class="pill">${esc(v.mood)}</span>` : ""}</div></div>
         <div class="coin-price">${price(v?.price ?? s.holdings.find(x => x.coin === c)?.price)}<div class="${cls(v?.change_24h)}" style="font-size:12px">${v ? pct(v.change_24h) + " 24h" : ""}</div>${spark(v?.spark)}</div></div>
       ${h ? `<div class="hold-line">Holding ${money(h.value)} · bought at ${price(h.entry)} · <b class="${cls(h.pnl)}">${pct(h.pnl)}</b> · stop-loss at ${price(h.stop)}</div>` : ""}
       ${v ? `<div class="reason">${esc(v.reason)}</div>` : ""}</div>`;
@@ -266,10 +294,22 @@ function render(s) {
   $("#risk-blurb").textContent = s.risk_levels[s.settings.risk].blurb;
   $("#chips").innerHTML = s.coins_available.map(c => `<button class="chip ${coins.includes(c) ? "on" : ""}" data-coin="${c}">${c}</button>`).join("");
   if (document.activeElement !== $("#cash")) $("#cash").value = s.settings.cash;
+  $("#ai-freq-box").style.display = isAI ? "" : "none";
+  if (isAI) {
+    $("#ai-freq").innerHTML = [1, 2, 4, 8].map(h => `<button data-h="${h}" class="${s.settings.ai_every_hours === h ? "on" : ""}">${h} h</button>`).join("");
+    const each = ai.calls ? ai.cost / ai.calls : 0.06;
+    $("#ai-freq-blurb").textContent = `About ${money(each * 24 / s.settings.ai_every_hours)} a day in Claude API costs${ai.calls ? "" : " (estimate)"}. Stop-losses are still checked every minute.`;
+  }
+  $("#test-card").style.display = isAI ? "none" : "";
+  $("#coins-sub").textContent = isAI ? "what Claude decided for each, and why" : "what the autopilot thinks of each";
 }
 
 async function refresh() { try { render(await api("/api/state")); } catch (e) { $("#err").textContent = "Can't reach the bot: " + e.message; } }
 
+$("#switcher").onclick = e => { const b = e.target.closest("[data-bot]"); if (!b || b.dataset.bot === BOT) return;
+  BOT = b.dataset.bot; try { localStorage.setItem("bot", BOT); } catch {} $("#test-out").innerHTML = ""; refresh(); };
+$("#ai-freq").onclick = async e => { const b = e.target.closest("[data-h]"); if (!b) return;
+  try { await api("/api/settings", { method: "POST", body: { ai_every_hours: +b.dataset.h } }); refresh(); } catch (er) { toast(er.message, true); } };
 $("#go").onclick = e => busy(e.currentTarget, async () => { await api(S.running ? "/api/stop" : "/api/start", { method: "POST" }); setTimeout(refresh, S.running ? 800 : 2500); toast(S.running ? "Paused" : "Started. First decision in a few seconds."); });
 $("#risk").onclick = async e => { const b = e.target.closest("[data-risk]"); if (!b) return; try { await api("/api/settings", { method: "POST", body: { risk: b.dataset.risk } }); toast(`Risk: ${b.textContent}. Applies from the next decision.`); refresh(); } catch (er) { toast(er.message, true); } };
 $("#chips").onclick = async e => { const b = e.target.closest("[data-coin]"); if (!b) return;
@@ -297,6 +337,17 @@ $("#test").onclick = e => busy(e.currentTarget, async () => {
 // how it works
 $("#how").onclick = () => {
   const pb = S?.playbooks || {};
+  if (S?.kind === "claude") {
+    $("#dlg-body").innerHTML = `
+      <p><b>Here Claude, Anthropic's AI model, is the trader.</b> Every hour (or however often you pick) the bot sends Claude a summary of each coin: recent prices, how fast and which way they're moving, common indicators, how the autopilot's playbooks have been doing, your current positions, and Claude's own notes from last time.</p>
+      <p>Claude replies with buy / sell / hold / stay out for each coin, how much to buy, how confident it is, and why, in plain words. You see all of it on this page.</p>
+      <h3>Safety rails (enforced by the code, not the AI)</h3>
+      <p>Play money only. No borrowing or betting on falls. Position sizes are capped by your risk level, and the stop-loss is checked every minute even between Claude's decisions. If Claude is unavailable, positions just stay as they are.</p>
+      <h3>Honest bit</h3>
+      <p>Claude reasons about the data like a careful human trader would, but no one has shown that AI models beat the market, and it can't see the future either. It can't be "tested on the past" fairly, because it may remember what prices did. So the only fair test is this one: let it run on play money next to the Autopilot and compare the two tiles at the top.</p>
+      <p class="muted">Each decision is a call to Anthropic's API, paid from your Anthropic account (about $0.05–0.10 per decision). The running total is shown on the page.</p>`;
+    dlg.showModal(); return;
+  }
   $("#dlg-body").innerHTML = `
     <p><b>It's an autopilot, not a single strategy.</b> It has a few playbooks and, every hour, it checks which one has actually been making money lately on each coin, then uses that one.</p>
     <h3>The playbooks</h3>${Object.values(pb).map(p => `<p><b>${esc(p.label)}</b>: ${esc(p.what)}</p>`).join("")}

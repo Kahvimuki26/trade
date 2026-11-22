@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 
 from ..autopilot import PLAYBOOKS, RISK
-from ..bot import Bot
+from ..bot import KINDS, Bot
 from ..data import COINS
 
 STATIC = Path(__file__).parent / "static"
@@ -23,14 +23,29 @@ DEFAULT_PORT = 8765
 log = logging.getLogger("tradebot")
 
 
-def create_app(bot: Bot | None = None):
+def make_bots(market=None) -> dict[str, Bot]:
+    """One play-money account per brain, so they can be compared side by side."""
+    return {"autopilot": Bot(market=market, path=Path("data/bot.json"), kind="autopilot"),
+            "claude": Bot(market=market, path=Path("data/claude.json"), kind="claude")}
+
+
+def create_app(bots: dict[str, Bot] | Bot | None = None):
     from fastapi import Body, FastAPI, Request
     from fastapi.responses import FileResponse, JSONResponse, Response
 
-    bot = bot or Bot()
+    if isinstance(bots, Bot):
+        bots = {bots.kind: bots}
+    bots = bots or make_bots()
     password = os.environ.get("TRADEBOT_PASSWORD", "")
     app = FastAPI(title="tradebot", docs_url=None, redoc_url=None)
-    app.state.bot = bot
+    app.state.bots = bots
+    app.state.bot = next(iter(bots.values()))
+
+    def pick(name: str | None) -> Bot:
+        name = name or next(iter(bots))
+        if name not in bots:
+            raise ValueError(f"Unknown bot '{name}'")
+        return bots[name]
 
     @app.middleware("http")
     async def auth(request: Request, call_next):
@@ -63,44 +78,57 @@ def create_app(bot: Bot | None = None):
         return FileResponse(STATIC / "index.html")
 
     @app.get("/api/state")
-    def state():
-        snap = bot.snapshot()
+    def state(bot: str | None = None):
+        b = pick(bot)
+        snap = b.snapshot()
         snap["coins_available"] = COINS
         snap["playbooks"] = PLAYBOOKS
+        snap["bots"] = {k: {"name": KINDS[k], "balance": x.portfolio.current_equity(x.prices),
+                            "start_cash": x.settings["cash"], "running": x.running, "started": x.started}
+                        for k, x in bots.items()}
         return snap
 
     @app.post("/api/start")
-    def start():
-        bot.start()
+    def start(bot: str | None = None):
+        b = pick(bot)
+        if b.kind == "claude" and not b._ai_configured():
+            raise ValueError("Add your Anthropic API key first (ANTHROPIC_API_KEY in the .env file), "
+                             "then restart tradebot.")
+        b.start()
         return {"running": True}
 
     @app.post("/api/stop")
-    def stop():
-        threading.Thread(target=bot.stop, daemon=True).start()
+    def stop(bot: str | None = None):
+        threading.Thread(target=pick(bot).stop, daemon=True).start()
         return {"running": False}
 
     @app.post("/api/settings")
-    def settings(body: dict = Body(...)):
-        bot.update_settings(risk=body.get("risk"), coins=body.get("coins"))
+    def settings(body: dict = Body(...), bot: str | None = None):
+        pick(bot).update_settings(risk=body.get("risk"), coins=body.get("coins"),
+                                  ai_every_hours=body.get("ai_every_hours"))
         return {"ok": True}
 
     @app.post("/api/reset")
-    def reset(body: dict = Body(...)):
+    def reset(body: dict = Body(...), bot: str | None = None):
         cash = float(body.get("cash") or 100)
         if not 1 <= cash <= 10_000_000:
             raise ValueError("Pick an amount between $1 and $10,000,000")
-        bot.reset(cash=cash, risk=body.get("risk"), coins=body.get("coins"))
+        pick(bot).reset(cash=cash, risk=body.get("risk"), coins=body.get("coins"))
         return {"ok": True}
 
     @app.post("/api/test")
-    def test(body: dict = Body(...)):
+    def test(body: dict = Body(...), bot: str | None = None):
         from ..sim import simulate
 
-        s = bot.settings
+        b = pick(bot)
+        if b.kind == "claude":
+            raise ValueError("Claude can't be tested on the past: it may remember what prices did, so the result "
+                             "would be fake. It can only be judged live.")
+        s = b.settings
         risk = body.get("risk") or s["risk"]
         if risk not in RISK:
             raise ValueError("Unknown risk level")
-        return simulate(bot.market, body.get("coins") or s["coins"], days=int(body.get("days") or 90),
+        return simulate(b.market, body.get("coins") or s["coins"], days=int(body.get("days") or 90),
                         risk=risk, cash=float(body.get("cash") or s["cash"]))
 
     # ---------------------------------------------------------------- updates
@@ -127,10 +155,13 @@ def create_app(bot: Bot | None = None):
         if restart:
             def bye():
                 time.sleep(1.0)
-                bot.stop()  # its state says 'running', so it resumes after the restart
+                for b in bots.values():
+                    b.stop(pause=False)  # resumes after the restart if it was running
+                    b.save()
                 os._exit(RESTART_CODE)
 
-            bot.save()
+            for b in bots.values():
+                b.save()
             threading.Thread(target=bye, daemon=True).start()
         return {"updated": True, "restarting": restart,
                 "message": "Updated. Restarting..." if restart else "Updated. Close tradebot and open it again."}
@@ -166,15 +197,19 @@ def serve(host: str = "127.0.0.1", port: int | None = None, open_browser: bool =
     port = pick_port(host, wanted)
     if port != wanted:
         print(f"\n  Port {wanted} is busy, so using {port} instead (set TRADEBOT_PORT in .env to fix one).")
-    if os.environ.get("TRADEBOT_DEMO"):  # developer demo: made-up prices, separate state file
+    if os.environ.get("TRADEBOT_DEMO"):  # developer demo: made-up prices, separate state files
         from ..data import Synthetic
 
-        bot = Bot(market=Synthetic(), path=Path("data/demo.json"))
+        m = Synthetic()
+        bots = {"autopilot": Bot(market=m, path=Path("data/demo.json")),
+                "claude": Bot(market=m, path=Path("data/demo-claude.json"), kind="claude")}
     else:
-        bot = Bot()
-    app = create_app(bot)
-    if autostart or bot.want_running:  # it was running when you closed it -> keep going
-        bot.start()
+        bots = make_bots()
+    app = create_app(bots)
+    for b in bots.values():
+        if b.want_running or (autostart and b.kind == "autopilot"):  # was running when closed -> keep going
+            if b.kind != "claude" or b._ai_configured():
+                b.start()
     url = f"http://{'127.0.0.1' if host in ('0.0.0.0', '::') else host}:{port}"
     print(f"\n  tradebot: {url}\n  Keep this window open. Close it to stop.\n")
     if open_browser:

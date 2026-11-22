@@ -19,6 +19,20 @@ It **updates itself** every time you start it, and shows an "Update now" bar whe
 version comes out. Your money, settings and history (in `data/`) and your `.env` are never touched.
 If you close the window while the bot is running, it continues when you open it again.
 
+## Two traders, side by side
+
+The two tiles at the top are two separate play-money accounts, so you can compare them:
+
+- **Autopilot:** rules that pick their own playbook every hour (below). Free.
+- **Claude AI:** every hour (or 2/4/8 h, your choice) the bot sends Claude (`claude-opus-5-5`)
+  a summary of each coin, your positions and Claude's own notes from last time. Claude answers
+  with buy / sell / hold / stay out per coin, a size, a confidence and a plain-English reason.
+  The code enforces the limits (position caps, no borrowing, stop-loss checked every minute), so
+  Claude can't break them. Needs an Anthropic API key: create one at console.anthropic.com,
+  add `ANTHROPIC_API_KEY=...` to `.env`, and restart. Each decision costs a few cents; the
+  dashboard shows the running total. Claude can't be "tested on the past" fairly, because it may
+  remember what prices did, so compare it live against the Autopilot.
+
 ## How the autopilot decides
 
 | Playbook | What it does |
@@ -44,10 +58,11 @@ blocked where you live, the bot shows an error on the dashboard.
 
 ```
 start.bat / start.command   double-click to run (sets itself up, updates itself)
-data/bot.json                your bot's money, settings and history (never overwritten by updates)
-.env                         optional: TRADEBOT_PORT, TRADEBOT_PASSWORD
+data/bot.json, claude.json   each trader's money, settings and history (never overwritten by updates)
+.env                         ANTHROPIC_API_KEY (for Claude), optional TRADEBOT_PORT, TRADEBOT_PASSWORD
 tradebot/
   autopilot.py   playbooks + the brain that picks between them
+  ai.py          Claude as the trader (prompt, structured answer, safety limits)
   bot.py         the live paper-trading loop
   sim.py         "test it on the past"
   data.py        Binance prices (+ made-up prices for tests)

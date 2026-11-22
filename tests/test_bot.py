@@ -52,3 +52,18 @@ def test_start_stop_thread(market, tmp_path, monkeypatch):
     time.sleep(0.3)
     bot.stop()
     assert not bot.running and bot.last_decision
+
+
+def test_restart_shutdown_keeps_running_flag(market, tmp_path, monkeypatch):
+    import tradebot.bot as botmod
+
+    monkeypatch.setattr(botmod, "POLL_SECONDS", 0.05)
+    path = tmp_path / "b.json"
+    bot = Bot(market=market, path=path)
+    bot.start()
+    bot.stop(pause=False)  # what the updater does before restarting
+    bot.save()
+    assert Bot(market=market, path=path).want_running is True
+    bot.start()
+    bot.stop()  # the user pressing Pause
+    assert Bot(market=market, path=path).want_running is False
