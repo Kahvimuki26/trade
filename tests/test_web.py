@@ -113,3 +113,15 @@ def test_runner_background_start_stop(setup):
     runner = client.app.state.runner
     runner.stop()
     assert runner.running is False
+
+
+def test_pick_port_skips_busy_port():
+    import socket
+
+    from tradebot.web import pick_port
+
+    with socket.socket() as busy:
+        busy.bind(("127.0.0.1", 0))
+        busy.listen()
+        taken = busy.getsockname()[1]
+        assert pick_port("127.0.0.1", taken) != taken

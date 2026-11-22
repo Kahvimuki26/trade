@@ -1,4 +1,4 @@
-"""Local web dashboard:  ``tradebot web``  ->  http://127.0.0.1:8000
+"""Local web dashboard:  ``tradebot web``  ->  http://127.0.0.1:8765
 
 Security:
   * Binds to 127.0.0.1 (only your computer) by default.
@@ -423,7 +423,29 @@ def create_app(config_path: str | Path = "configs/instances.yaml", runner: Runne
     return app
 
 
-def serve(config_path: str = "configs/instances.yaml", host: str = "127.0.0.1", port: int = 8000,
+DEFAULT_PORT = 8765
+
+
+def port_free(host: str, port: int) -> bool:
+    import socket
+
+    with socket.socket(socket.AF_INET6 if ":" in host else socket.AF_INET, socket.SOCK_STREAM) as sock:
+        try:
+            sock.bind((host, port))
+            return True
+        except OSError:
+            return False
+
+
+def pick_port(host: str, wanted: int, tries: int = 20) -> int:
+    for port in range(wanted, wanted + tries):
+        if port_free(host, port):
+            return port
+    raise RuntimeError(f"Ports {wanted}-{wanted + tries - 1} are all in use. Set TRADEBOT_PORT in .env "
+                       "to a free port.")
+
+
+def serve(config_path: str = "configs/instances.yaml", host: str = "127.0.0.1", port: int | None = None,
           open_browser: bool = False, autostart: bool = False) -> None:
     import uvicorn
 
@@ -432,6 +454,11 @@ def serve(config_path: str = "configs/instances.yaml", host: str = "127.0.0.1", 
                            "Set TRADEBOT_PASSWORD or use the default host 127.0.0.1.")
     if not Path(config_path).exists():
         raise FileNotFoundError(f"Config not found: {config_path} (run from the project folder)")
+    wanted = port or int(os.environ.get("TRADEBOT_PORT") or DEFAULT_PORT)
+    port = pick_port(host, wanted)
+    if port != wanted:
+        print(f"\n  Port {wanted} is busy (another program uses it), so using {port} instead."
+              f"\n  To always use a fixed port, add TRADEBOT_PORT=<number> to .env")
     app = create_app(config_path)
     if autostart:
         app.state.runner.start()

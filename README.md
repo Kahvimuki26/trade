@@ -12,7 +12,7 @@ instances at once, each with its own strategy, symbols and simulated account.
 
 1. Install Python from python.org (Windows: tick **"Add Python to PATH"**).
 2. Double-click **`start.bat`** (Windows) or **`start.command`** (Mac; if blocked, right-click → Open).
-   The first run sets everything up, then the dashboard opens at **http://127.0.0.1:8000**.
+   The first run sets everything up, then the dashboard opens at **http://127.0.0.1:8765**.
 3. Keep that window open while you use it. Close it to stop.
 
 In the dashboard:

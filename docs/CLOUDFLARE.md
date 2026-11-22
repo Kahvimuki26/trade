@@ -5,7 +5,7 @@ changes, and your home IP stays hidden. Cloudflare forwards `https://trade.<your
 to the dashboard running on your computer.
 
 ```
-phone / laptop  ──https──>  Cloudflare  ──tunnel──>  your computer (tradebot web, localhost:8000)
+phone / laptop  ──https──>  Cloudflare  ──tunnel──>  your computer (tradebot web, localhost:8765)
 ```
 
 > **The computer running tradebot has to be on** for the site to work and for the bot to trade.
@@ -39,10 +39,14 @@ As a safety net, tradebot **refuses requests coming through Cloudflare when no p
    - Subdomain: `trade`
    - Domain: `icemail.fun`
    - Service type: `HTTP`
-   - URL: `localhost:8000`
+   - URL: `localhost:8765`
 5. Save. Cloudflare creates the `trade.icemail.fun` DNS record automatically.
 
 Start the dashboard (`start.bat` / `start.command`) and open **https://trade.icemail.fun**.
+
+> The tunnel points at port 8765. If the dashboard's window says it's using a different port
+> (because 8765 was busy), either free that port or add `TRADEBOT_PORT=<that number>` to `.env`
+> and use the same number in the tunnel's URL.
 
 ## Step 3 (recommended): Add a Cloudflare login in front of it
 
@@ -70,4 +74,4 @@ With this plus `TRADEBOT_PASSWORD`, you have two locks.
 To keep it running 24/7, put the project on a small Linux VPS (about $4–6/month; Hetzner,
 DigitalOcean etc.) or a Raspberry Pi. Install Python, then run `bash start.command` (it works on
 Linux too), and install cloudflared there instead of on your PC. Point the tunnel's public
-hostname at `localhost:8000` the same way.
+hostname at `localhost:8765` the same way.

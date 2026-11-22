@@ -268,10 +268,11 @@ def build_parser() -> argparse.ArgumentParser:
     cfg_arg(rs)
     rs.set_defaults(func=cmd_reset)
 
-    w = sub.add_parser("web", help="Open the dashboard in your browser (http://127.0.0.1:8000)")
+    w = sub.add_parser("web", help="Open the dashboard in your browser (http://127.0.0.1:8765)")
     cfg_arg(w)
     w.add_argument("--host", default="127.0.0.1", help="Default 127.0.0.1 = only this computer")
-    w.add_argument("--port", type=int, default=8000)
+    w.add_argument("--port", type=int, default=None,
+                   help="Default 8765 (or TRADEBOT_PORT in .env); the next free one if busy")
     w.add_argument("--open", action="store_true", help="Open the browser automatically")
     w.add_argument("--start", action="store_true", help="Start paper trading right away")
     w.set_defaults(func=cmd_web)
