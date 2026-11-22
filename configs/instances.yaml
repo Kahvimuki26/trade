@@ -72,6 +72,15 @@ instances:
     alpaca_account: default
     enabled: false
 
+  # Day trading (in and out the same day). High risk, with a small account like you'd start with.
+  - name: scalper-tqqq
+    strategy: dip_scalper
+    starting_cash: 100
+
+  - name: orb-leveraged
+    strategy: orb_breakout
+    starting_cash: 100
+
   # Intraday example (disabled). Flip `enabled` to try it.
   - name: ema-spy-15m
     strategy: ema_cross_trend

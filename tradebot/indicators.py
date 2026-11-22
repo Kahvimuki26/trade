@@ -64,5 +64,28 @@ def vwap(df: pd.DataFrame) -> pd.Series:
     """Session VWAP for intraday bars (resets every calendar day)."""
     typical = (df["high"] + df["low"] + df["close"]) / 3
     pv = typical * df["volume"]
-    day = df.index.normalize()
+    day = ny_index(df).normalize()
     return pv.groupby(day).cumsum() / df["volume"].groupby(day).cumsum()
+
+
+def ny_index(df: pd.DataFrame) -> pd.DatetimeIndex:
+    """Bar timestamps in New York time (naive timestamps are assumed to already be NY)."""
+    return df.index.tz_convert("America/New_York") if df.index.tz is not None else df.index
+
+
+def minutes_of_day(df: pd.DataFrame):
+    """Minutes since midnight (New York) for every bar, as a numpy array."""
+    idx = ny_index(df)
+    return (idx.hour * 60 + idx.minute).to_numpy()
+
+
+def hhmm(s: str) -> int:
+    h, m = map(int, s.split(":"))
+    return h * 60 + m
+
+
+def bar_minutes(df: pd.DataFrame) -> int:
+    """Typical bar length in minutes (e.g. 1 or 5)."""
+    if len(df) < 2:
+        return 1
+    return max(1, int(pd.Series(df.index).diff().median().total_seconds() // 60))

@@ -94,6 +94,16 @@ class DataCache:
         return df
 
 
+def category(cls) -> str:
+    return cls.category or ("classic" if cls.source.startswith("classic") else "social")
+
+
+def strategy_order(cls):
+    """Benchmark first, then classics, then social media, then day trading."""
+    rank = {"classic": 1, "social": 2, "day trading": 3}.get(category(cls), 2)
+    return (cls.name != "buy_and_hold", rank, cls.display_name or cls.name)
+
+
 # ------------------------------------------------------------------ config I/O
 class ConfigStore:
     """Edits configs/instances.yaml while keeping it valid (backs up the original once)."""
@@ -197,10 +207,9 @@ def create_app(config_path: str | Path = "configs/instances.yaml", runner: Runne
             "name": s.name, "display_name": s.display_name or s.name, "description": s.description,
             "source": s.source, "explainer": s.explainer, "param_help": s.param_help,
             "interval": s.interval, "recommended": s.recommended,
+            "category": category(s),
             "params": s.default_params, "notes": s.notes,
-        }) for s in sorted(list_strategies(), key=lambda c: (c.name != "buy_and_hold",
-                                                              not c.source.startswith("classic"),
-                                                              c.display_name or c.name))]
+        }) for s in sorted(list_strategies(), key=strategy_order)]
 
     # ------------------------------------------------------------- overview
     def summary(inst: InstanceConfig, state_dir: str) -> dict:
@@ -415,7 +424,8 @@ def create_app(config_path: str | Path = "configs/instances.yaml", runner: Runne
     def bt_kwargs(body: dict, cls) -> dict:
         lev = body.get("max_leverage")
         return dict(cash=float(body.get("cash") or 10_000), commission=float(body.get("commission") or 0),
-                    slippage_bps=float(body.get("slippage_bps") if body.get("slippage_bps") not in (None, "") else 1),
+                    slippage_bps=float(body.get("slippage_bps") if body.get("slippage_bps") not in (None, "")
+                                       else cls.recommended.get("slippage_bps", 1)),
                     max_leverage=float(lev) if lev not in (None, "") else cls.recommended.get("max_leverage", 1.0))
 
     @app.post("/api/backtest")

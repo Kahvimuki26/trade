@@ -47,6 +47,8 @@ class Strategy(ABC):
     explainer: ClassVar[dict[str, str]] = {}
     #: One line per parameter explaining what changing it does.
     param_help: ClassVar[dict[str, str]] = {}
+    #: Group shown in the dashboard: "classic", "social" or "day trading".
+    category: ClassVar[str] = ""
 
     def __init__(self, **params: Any) -> None:
         unknown = set(params) - set(self.default_params)

@@ -56,7 +56,10 @@ def bt_kwargs(args, cls=None) -> dict:
     lev = args.max_leverage
     if lev is None:
         lev = (cls.recommended.get("max_leverage", 1.0) if cls else 1.0)
-    return dict(cash=args.cash, commission=args.commission, slippage_bps=args.slippage_bps,
+    slip = args.slippage_bps
+    if slip is None:
+        slip = cls.recommended.get("slippage_bps", 1.0) if cls else 1.0
+    return dict(cash=args.cash, commission=args.commission, slippage_bps=slip,
                 fractional=not args.whole_shares, max_leverage=lev)
 
 
@@ -221,7 +224,8 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--csv-dir", default="data", help="Folder with <SYMBOL>.csv for --source csv")
         sp.add_argument("--cash", type=float, default=10_000)
         sp.add_argument("--commission", type=float, default=0.0, help="Flat fee per order")
-        sp.add_argument("--slippage-bps", type=float, default=1.0)
+        sp.add_argument("--slippage-bps", type=float, default=None,
+                        help="Cost per fill in basis points (default: strategy's recommendation, else 1)")
         sp.add_argument("--whole-shares", action="store_true", help="Disallow fractional shares")
         sp.add_argument("--max-leverage", type=float, default=None,
                         help="Max exposure / equity (default: what the strategy recommends, else 1)")
