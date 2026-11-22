@@ -1,0 +1,2 @@
+# trade
+Claude project
