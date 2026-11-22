@@ -354,6 +354,46 @@ def create_app(config_path: str | Path = "configs/instances.yaml", runner: Runne
         n = runner.tick(force=bool(body.get("force")))
         return {"updated": n}
 
+    # ------------------------------------------------------------- updates
+    update_cache: dict = {"t": 0.0, "info": None}
+
+    @app.get("/api/update")
+    def update_check(fresh: bool = False):
+        from .. import updater
+
+        if fresh or not update_cache["info"] or time.time() - update_cache["t"] > 900:
+            update_cache["info"] = updater.check()
+            update_cache["t"] = time.time()
+        info = dict(update_cache["info"])
+        info["can_restart"] = os.environ.get("TRADEBOT_LAUNCHER") == "1"
+        return info
+
+    @app.post("/api/update")
+    def update_apply():
+        from .. import updater
+        from ..launch import RESTART_CODE, RESUME_FILE
+
+        result = updater.update()
+        update_cache["info"] = None
+        if not result.get("updated"):
+            return {"updated": False, "message": result.get("reason")}
+        restart = os.environ.get("TRADEBOT_LAUNCHER") == "1"
+        log.info("Updated to version %s (%d files)", result["version"][:7],
+                 len(result["changed"]) + len(result["added"]))
+        if restart:
+            if runner.running:
+                RESUME_FILE.write_text("1")
+
+            def bye():
+                time.sleep(1.0)
+                runner.stop()
+                os._exit(RESTART_CODE)
+
+            threading.Thread(target=bye, daemon=True).start()
+        return {"updated": True, "restarting": restart, "version": result["version"],
+                "message": "Updated. Restarting..." if restart else
+                "Updated. Close the tradebot window and start it again to use the new version."}
+
     @app.get("/api/logs")
     def get_logs(after: int = 0):
         return [line for line in logs.lines if line["id"] > after]

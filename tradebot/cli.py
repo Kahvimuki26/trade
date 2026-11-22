@@ -276,7 +276,18 @@ def build_parser() -> argparse.ArgumentParser:
     w.add_argument("--open", action="store_true", help="Open the browser automatically")
     w.add_argument("--start", action="store_true", help="Start paper trading right away")
     w.set_defaults(func=cmd_web)
+
+    up = sub.add_parser("update", help="Download the latest version (keeps .env, config and state)")
+    up.add_argument("--check", action="store_true", help="Only check, don't install")
+    up.add_argument("--force", action="store_true", help="Reinstall even if up to date")
+    up.set_defaults(func=cmd_update)
     return p
+
+
+def cmd_update(args) -> None:
+    from . import updater
+
+    updater.main(["--check"] if args.check else (["--force"] if args.force else []))
 
 
 def cmd_web(args) -> None:

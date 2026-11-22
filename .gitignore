@@ -8,3 +8,6 @@ venv/
 state/
 results/
 data/*.csv
+*.updating
+.tradebot-version
+.tradebot-resume

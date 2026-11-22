@@ -1,9 +1,10 @@
 #!/bin/bash
-# Mac: double-click to open the tradebot dashboard. First run sets everything up.
-# If macOS says it can't be opened: right-click it -> Open, or run  bash start.command
+# Mac/Linux: double-click (or run  bash start.command) to open the tradebot dashboard.
+# It updates itself to the latest version every time you start it.
+# If macOS says it can't be opened: right-click it -> Open.
 cd "$(dirname "$0")" || exit 1
 
-if [ ! -f .venv/bin/activate ]; then
+if [ ! -x .venv/bin/python ]; then
   echo "First run: setting things up. This takes a minute..."
   if ! python3 -m venv .venv; then
     echo
@@ -12,10 +13,4 @@ if [ ! -f .venv/bin/activate ]; then
     exit 1
   fi
 fi
-source .venv/bin/activate
-python -m pip install -q --disable-pip-version-check -e ".[alpaca]" \
-  || echo "Warning: could not install/update packages (offline?). Trying to start anyway..."
-
-echo
-echo "Opening the dashboard. Keep this window open while you use it. Close it to stop."
-tradebot web --open
+.venv/bin/python -m tradebot.launch

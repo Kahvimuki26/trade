@@ -1,8 +1,9 @@
 @echo off
-rem Double-click to open the tradebot dashboard. First run sets everything up.
+rem Double-click to open the tradebot dashboard.
+rem It updates itself to the latest version every time you start it.
 cd /d "%~dp0"
 
-if not exist ".venv\Scripts\activate.bat" (
+if not exist ".venv\Scripts\python.exe" (
   echo First run: setting things up. This takes a minute...
   python -m venv .venv
   if errorlevel 1 (
@@ -13,11 +14,5 @@ if not exist ".venv\Scripts\activate.bat" (
     exit /b 1
   )
 )
-call ".venv\Scripts\activate.bat"
-python -m pip install -q --disable-pip-version-check -e ".[alpaca]"
-if errorlevel 1 echo Warning: could not install/update packages (offline?). Trying to start anyway...
-
-echo.
-echo Opening the dashboard. Keep this window open while you use it. Close it to stop.
-tradebot web --open
+".venv\Scripts\python.exe" -m tradebot.launch
 pause

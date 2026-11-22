@@ -130,6 +130,9 @@ code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-si
 .gloss dt { font-weight: 600; } .gloss dd { margin: 0; color: var(--muted); }
 .steps { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
 .welcome { position: relative; }
+#update-bar .inner { max-width: 1200px; margin: 0 auto; padding: 8px 16px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+#update-bar { background: var(--accent); color: #fff; }
+#update-bar button { background: #fff; color: #1d4ed8; border-color: #fff; }
 .welcome .x { position: absolute; top: 10px; right: 10px; }
 @media (max-width: 640px) { .pros-cons { grid-template-columns: 1fr; } .gloss { grid-template-columns: 1fr; gap: 2px; } .gloss dd { margin-bottom: 8px; } }
 @media (max-width: 640px) { .big { font-size: 19px; } nav a { padding: 6px 8px; } th, td { padding: 6px; } }
@@ -152,6 +155,7 @@ code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-si
     <button class="small" id="theme" title="Light / dark" aria-label="Toggle light or dark theme" style="display:inline-flex;padding:6px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></button>
   </div>
 </header>
+<div id="update-bar"></div>
 <main id="app"></main>
 
 <dialog id="dlg"><div class="dlg-head"><h2 id="dlg-title" style="margin:0"></h2><button class="small" onclick="dlg.close()">Close</button></div><div class="dlg-body" id="dlg-body"></div></dialog>
@@ -632,6 +636,8 @@ pages.settings = async app => {
   app.innerHTML = `<h1>Settings</h1><p class="sub">This is <code>configs/instances.yaml</code>. The paper trader re-reads it on every check, so changes apply without a restart.</p>
     <div class="card"><textarea id="s-text" rows="26" spellcheck="false">${esc(text)}</textarea>
     <div class="row" style="margin-top:10px"><button class="primary" id="s-save">Save</button><span class="muted">Checked before saving. A backup of the original is kept as instances.yaml.bak.</span></div></div>
+    <div class="card" style="margin-top:14px"><h2>Updates</h2><div class="row"><span id="s-ver" class="muted">Checking version…</span><button class="small" id="s-upd">Check for updates</button></div>
+      <p class="muted" style="font-size:12px;margin-bottom:0">tradebot updates itself every time you open it with start.bat / start.command, and shows a banner when a new version comes out. Your .env, settings (instances.yaml) and trading history are never changed.</p></div>
     <div class="card help" style="margin-top:14px"><h2>Help</h2>
       <details><summary>What do these settings mean?</summary><ul>
         <li><code>interval</code>: bar size (1d = daily candles, 5m = 5-minute candles).</li>
@@ -643,6 +649,10 @@ pages.settings = async app => {
       <details><summary>Open it on my phone / my own domain</summary><p>See <code>docs/CLOUDFLARE.md</code> in the project folder. It shows how to put this dashboard on a subdomain with a login, using a free Cloudflare Tunnel.</p></details>
     </div>`;
   $("#s-save").onclick = e => busy(e.currentTarget, async () => { await api("/api/config", { method: "PUT", body: { text: $("#s-text").value } }); toast("Saved"); });
+  const showVer = u => { if (!u) return; $("#s-ver").textContent = u.git ? "Developer copy (git): update with git pull." :
+    u.error ? `Couldn't check (${u.error}).` : `Installed: ${u.current ? u.current.slice(0, 7) : "unknown"} · latest: ${(u.latest || "").slice(0, 7)} · ${u.available ? "update available" : "up to date"}`; };
+  checkUpdate().then(showVer);
+  $("#s-upd").onclick = e => busy(e.currentTarget, async () => { const u = await checkUpdate(true); showVer(u); if (u && !u.available) toast("You're on the latest version"); });
 };
 
 
@@ -690,6 +700,33 @@ pages.guide = async app => {
     </div>
     <div class="card" style="margin-top:14px"><h2>Words you'll see</h2><dl class="gloss">${GLOSSARY.map(([t, d]) => `<dt>${esc(t)}</dt><dd>${esc(d)}</dd>`).join("")}</dl></div>`;
 };
+
+// ----------------------------------------------------------------- updates
+async function checkUpdate(fresh = false) {
+  let u; try { u = await api(`/api/update${fresh ? "?fresh=1" : ""}`); } catch { return null; }
+  const bar = $("#update-bar");
+  bar.innerHTML = u.available && !u.git && !u.error ? `<div class="inner"><b>A new version of tradebot is available.</b>
+    <span style="opacity:.9">Your keys, settings and trading history are kept.</span>
+    <button class="small" id="upd-btn">Update now</button></div>` : "";
+  const b = $("#upd-btn"); if (b) b.onclick = () => installUpdate(b);
+  return u;
+}
+async function installUpdate(btn) {
+  await busy(btn, async () => {
+    const r = await api("/api/update", { method: "POST" });
+    if (!r.updated) { toast(r.message || "Already up to date"); $("#update-bar").innerHTML = ""; return; }
+    if (!r.restarting) { toast(r.message); $("#update-bar").innerHTML = ""; return; }
+    $("#update-bar").innerHTML = `<div class="inner"><span class="spin"></span> <b>Updating and restarting…</b> the page reloads by itself.</div>`;
+    await new Promise(res => setTimeout(res, 3000));
+    for (let i = 0; i < 60; i++) {
+      try { const res = await fetch("/api/overview"); if (res.ok) { location.reload(); return; } } catch {}
+      await new Promise(res => setTimeout(res, 1500));
+    }
+    toast("The dashboard didn't come back. Close the tradebot window and start it again.", true);
+  });
+}
+checkUpdate();
+setInterval(checkUpdate, 30 * 60 * 1000);
 
 // header market badge on every page
 api("/api/overview").then(setMarket).catch(() => {});
