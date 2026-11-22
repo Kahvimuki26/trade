@@ -194,10 +194,13 @@ def create_app(config_path: str | Path = "configs/instances.yaml", runner: Runne
     @app.get("/api/strategies")
     def strategies():
         return [clean({
-            "name": s.name, "description": s.description, "source": s.source,
+            "name": s.name, "display_name": s.display_name or s.name, "description": s.description,
+            "source": s.source, "explainer": s.explainer, "param_help": s.param_help,
             "interval": s.interval, "recommended": s.recommended,
             "params": s.default_params, "notes": s.notes,
-        }) for s in list_strategies()]
+        }) for s in sorted(list_strategies(), key=lambda c: (c.name != "buy_and_hold",
+                                                              not c.source.startswith("classic"),
+                                                              c.display_name or c.name))]
 
     # ------------------------------------------------------------- overview
     def summary(inst: InstanceConfig, state_dir: str) -> dict:
@@ -362,7 +365,7 @@ def create_app(config_path: str | Path = "configs/instances.yaml", runner: Runne
                              interval, body.get("csv_dir") or "data") for s in symbols}
 
     def symbols_of(body: dict, cls=None) -> list[str]:
-        syms = body.get("symbols") or (cls.recommended.get("symbols") if cls else None) or []
+        syms = body.get("symbols") or ((cls.recommended.get("symbols") or ["SPY"]) if cls else None) or []
         if isinstance(syms, str):
             syms = [x.strip().upper() for x in syms.replace(" ", ",").split(",") if x.strip()]
         if not syms:

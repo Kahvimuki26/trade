@@ -57,3 +57,12 @@ def test_latch():
     e = pd.Series([0, 1, 0, 0, 0, 1, 1], dtype=bool)
     x = pd.Series([0, 0, 0, 1, 0, 0, 1], dtype=bool)
     assert latch(e, x).tolist() == [0, 1, 1, 0, 0, 1, 0]
+
+
+@pytest.mark.parametrize("name", ALL)
+def test_beginner_info_present(name):
+    cls = strategy_class(name)
+    assert cls.display_name, f"{name}: add display_name"
+    assert cls.explainer.get("summary") and cls.explainer.get("how"), f"{name}: add explainer summary/how"
+    missing = set(cls.default_params) - set(cls.param_help)
+    assert not missing, f"{name}: add param_help for {sorted(missing)}"

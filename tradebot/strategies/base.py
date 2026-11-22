@@ -40,6 +40,13 @@ class Strategy(ABC):
     recommended: ClassVar[dict[str, Any]] = {}
     #: Free text shown by ``tradebot info``: assumptions, how to read it, caveats.
     notes: ClassVar[str] = ""
+    #: Friendly name shown in the dashboard, e.g. "Buy the Dip (RSI)".
+    display_name: ClassVar[str] = ""
+    #: Beginner explanation shown by the dashboard's info button. Keys (all optional):
+    #: summary (one line), how, good (when it works), bad (when it struggles), sizing, caveat.
+    explainer: ClassVar[dict[str, str]] = {}
+    #: One line per parameter explaining what changing it does.
+    param_help: ClassVar[dict[str, str]] = {}
 
     def __init__(self, **params: Any) -> None:
         unknown = set(params) - set(self.default_params)

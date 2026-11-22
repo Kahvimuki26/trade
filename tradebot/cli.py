@@ -62,7 +62,8 @@ def bt_kwargs(args, cls=None) -> dict:
 
 # ------------------------------------------------------------------ commands
 def cmd_list(args) -> None:
-    rows = [{"name": s.name, "bars": s.interval or "any", "description": s.description}
+    rows = [{"name": s.name, "friendly name": s.display_name or s.name, "bars": s.interval or "any",
+             "description": s.description}
             for s in list_strategies()]
     print(table(rows))
     print("\nMore about one:  tradebot info <name>")

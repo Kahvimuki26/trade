@@ -56,7 +56,7 @@ button.primary:hover { filter: brightness(1.08); }
 button.danger { color: var(--down); }
 button:disabled { opacity: .55; cursor: default; }
 button.small { padding: 4px 9px; font-size: 12px; }
-label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); font-weight: 500; }
+label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); font-weight: 500; align-content: start; }
 input, select, textarea { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--border);
   border-radius: 7px; padding: 7px 9px; width: 100%; }
 input[type=checkbox] { width: auto; }
@@ -113,6 +113,25 @@ dialog::backdrop { background: rgba(0,0,0,.45); }
 .help summary { cursor: pointer; font-weight: 500; }
 .help p, .help li { color: var(--muted); }
 code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-size: 12.5px; }
+.ibtn { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; padding: 0;
+  border-radius: 50%; font: 600 12px/1 Georgia, serif; font-style: italic; color: var(--accent); border: 1px solid var(--border);
+  background: var(--panel); cursor: pointer; vertical-align: middle; flex: none; }
+.ibtn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+.hint { font-size: 11.5px; color: var(--muted); font-weight: 400; line-height: 1.35; }
+.label-row { display: flex; align-items: center; gap: 6px; }
+.explain h3 { font-size: 13px; margin: 0 0 4px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.explain p { margin: 0; }
+.explain .sum { font-size: 16px; font-weight: 500; }
+.explain section { display: grid; gap: 4px; }
+.pros-cons { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.pros-cons > div { background: var(--panel-2); border-radius: 8px; padding: 10px 12px; }
+.pros-cons h3.good { color: var(--up); } .pros-cons h3.bad { color: var(--down); }
+.gloss { display: grid; grid-template-columns: minmax(120px, 180px) 1fr; gap: 8px 16px; }
+.gloss dt { font-weight: 600; } .gloss dd { margin: 0; color: var(--muted); }
+.steps { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
+.welcome { position: relative; }
+.welcome .x { position: absolute; top: 10px; right: 10px; }
+@media (max-width: 640px) { .pros-cons { grid-template-columns: 1fr; } .gloss { grid-template-columns: 1fr; gap: 2px; } .gloss dd { margin-bottom: 8px; } }
 @media (max-width: 640px) { .big { font-size: 19px; } nav a { padding: 6px 8px; } th, td { padding: 6px; } }
 </style>
 </head>
@@ -126,6 +145,7 @@ code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-si
       <a href="#/compare" data-page="compare">Compare</a>
       <a href="#/strategies" data-page="strategies">Strategies</a>
       <a href="#/settings" data-page="settings">Settings</a>
+      <a href="#/guide" data-page="guide">Guide</a>
     </nav>
     <div class="spacer"></div>
     <span class="pill" id="market"><span class="dot"></span>market</span>
@@ -135,6 +155,7 @@ code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-si
 <main id="app"></main>
 
 <dialog id="dlg"><div class="dlg-head"><h2 id="dlg-title" style="margin:0"></h2><button class="small" onclick="dlg.close()">Close</button></div><div class="dlg-body" id="dlg-body"></div></dialog>
+<dialog id="info"><div class="dlg-head"><h2 id="info-title" style="margin:0"></h2><button class="small" onclick="this.closest('dialog').close()">Close</button></div><div class="dlg-body explain" id="info-body"></div></dialog>
 <div class="toast" id="toast"></div>
 
 <script>
@@ -172,6 +193,35 @@ function fmtTime(t) {
   if (d.getHours() || d.getMinutes()) { opts.hour = "2-digit"; opts.minute = "2-digit"; }  // daily bars have no time
   return d.toLocaleString(undefined, opts);
 }
+
+// strategies: friendly names + info popup
+async function ensureStrats() { if (!STRATS.length) STRATS = await api("/api/strategies"); return STRATS; }
+const strat = key => STRATS.find(s => s.name === key);
+const sname = key => strat(key)?.display_name || key;
+const infoBtn = key => `<button type="button" class="ibtn" title="What is this strategy?" onclick="event.stopPropagation();showStrategyInfo('${esc(key)}')">i</button>`;
+function showStrategyInfo(key) {
+  const s = strat(key); if (!s) return;
+  const e = s.explainer || {};
+  const params = Object.entries(s.params);
+  $("#info-title").textContent = s.display_name;
+  $("#info-body").innerHTML = `
+    <p class="sum">${esc(e.summary || s.description)}</p>
+    ${e.how ? `<section><h3>How it works</h3><p>${esc(e.how)}</p></section>` : ""}
+    ${e.good || e.bad ? `<div class="pros-cons">
+      <div><h3 class="good">Works well when</h3><p>${esc(e.good || "–")}</p></div>
+      <div><h3 class="bad">Struggles when</h3><p>${esc(e.bad || "–")}</p></div></div>` : ""}
+    ${e.sizing ? `<section><h3>How much it buys</h3><p>${esc(e.sizing)}</p></section>` : `<section><h3>How much it buys</h3><p>The instance's money is split equally across its symbols, and each one is either fully in or fully out.</p></section>`}
+    ${e.caveat ? `<div class="note warnbox">${esc(e.caveat)}</div>` : ""}
+    <section><h3>What it needs</h3><p>${s.interval ? `${esc(s.interval)} price bars (candles).` : "Works on any bar size; daily (1d) by default."}
+      ${s.recommended?.symbols ? ` Trades ${esc(s.recommended.symbols.join(" and "))} unless you choose others.` : ""}
+      ${s.recommended?.max_leverage > 1 ? ` May use up to ${s.recommended.max_leverage}× leverage (borrowed money).` : ""}</p></section>
+    ${params.length ? `<section><h3>Settings you can change</h3><table>${params.map(([k, v]) => `<tr><td><code>${esc(k)}</code></td><td class="num">${esc(v)}</td><td style="white-space:normal">${esc(s.param_help?.[k] || "")}</td></tr>`).join("")}</table></section>` : ""}
+    <div class="row"><a class="btn" style="text-decoration:none" href="#/backtest?s=${encodeURIComponent(key)}" onclick="this.closest('dialog').close()">Backtest it</a>
+      <button onclick="this.closest('dialog').close();editInstance(null,{strategy:'${esc(key)}'})">Paper trade it</button></div>
+    <p class="muted" style="font-size:12px;margin:0">Internal name: <code>${esc(key)}</code> · source: ${esc(s.source || "–")}</p>`;
+  $("#info").showModal();
+}
+const stratOptions = sel => STRATS.map(s => `<option value="${s.name}" ${s.name === sel ? "selected" : ""}>${esc(s.display_name)}</option>`).join("");
 
 // theme toggle (remembered per browser)
 (() => {
@@ -261,7 +311,18 @@ window.addEventListener("hashchange", route);
 // ----------------------------------------------------------------- overview
 let logAfter = 0, logLines = [];
 pages.overview = async app => {
-  app.innerHTML = `
+  await ensureStrats();
+  let hideWelcome = false; try { hideWelcome = localStorage.getItem("welcome-done") === "1"; } catch {}
+  app.innerHTML = `${hideWelcome ? "" : `<div class="card welcome" style="margin-bottom:16px">
+      <button class="small x" onclick="try{localStorage.setItem('welcome-done','1')}catch{};this.closest('.welcome').remove()">Got it</button>
+      <h2>New here? How this works</h2>
+      <ol class="steps">
+        <li><b>Paper trading = fake money, real prices.</b> Each card below is one robot trader (an "instance") following one strategy with its own pretend $10,000.</li>
+        <li><b>Press Start</b> and leave this window open. The robots only trade while the US stock market is open (9:30–16:00 New York time, Mon–Fri).</li>
+        <li><b>Click the <span class="ibtn" style="pointer-events:none">i</span> next to a strategy</b> to see what it does, in plain words.</li>
+        <li><b>Want to know if a strategy is any good first?</b> Use <a href="#/backtest">Backtest</a>: it replays the strategy on years of past prices.</li>
+        <li>Unsure about a word? The <a href="#/guide">Guide</a> explains them.</li>
+      </ol></div>`}
     <div class="row" style="justify-content:space-between;margin-bottom:16px">
       <div><h1>Paper trading</h1><p class="sub" style="margin:0">Fake money, live prices. Each instance runs one strategy with its own account.</p></div>
       <div class="row">
@@ -318,7 +379,7 @@ async function refresh() {
 function instCard(i) {
   const pos = Object.entries(i.positions || {});
   return `<div class="card inst ${i.enabled ? "" : "disabled"}" data-name="${esc(i.name)}">
-    <div class="inst-top"><div><div class="name">${esc(i.name)}</div><div class="muted" style="font-size:12px">${esc(i.strategy)} · ${esc(i.symbols.join(", "))} · ${esc(i.interval)}</div></div>
+    <div class="inst-top"><div><div class="name">${esc(i.name)}</div><div class="muted label-row" style="font-size:12px">${esc(sname(i.strategy))} ${infoBtn(i.strategy)}</div><div class="muted" style="font-size:12px">${esc(i.symbols.join(", "))} · ${esc(i.interval)} bars</div></div>
       <label class="switch" title="Enabled"><input type="checkbox" data-name="${esc(i.name)}" ${i.enabled ? "checked" : ""}><span></span></label></div>
     <div class="row" style="justify-content:space-between;align-items:flex-end">
       <div><div class="big">${i.started ? money(i.equity) : `<span class="muted" style="font-size:15px">not started</span>`}</div>
@@ -326,7 +387,7 @@ function instCard(i) {
       ${i.started ? spark(i.spark, i.return >= 0) : ""}</div>
     <div class="row" style="gap:6px">
       <span class="pill">${i.broker === "alpaca" ? "Alpaca paper" : "simulated"}</span>
-      ${pos.length ? pos.map(([s, q]) => `<span class="pill ${q > 0 ? "up" : "down"}">${q > 0 ? "LONG" : "SHORT"} ${esc(s)}</span>`).join("") : i.started ? `<span class="pill">flat</span>` : ""}
+      ${pos.length ? pos.map(([s, q]) => `<span class="pill ${q > 0 ? "up" : "down"}" title="${q > 0 ? `Owns ${esc(s)}: makes money if it goes up` : `Short ${esc(s)}: makes money if it goes down`}">${q > 0 ? "LONG" : "SHORT"} ${esc(s)}</span>`).join("") : i.started ? `<span class="pill" title="Holding cash, no position">flat (cash)</span>` : ""}
       ${i.orders ? `<span class="pill">${i.orders} order${i.orders === 1 ? "" : "s"}</span>` : ""}
     </div>
     ${i.last_update ? `<div class="muted" style="font-size:12px">updated ${esc(fmtTime(i.last_update))}</div>` : ""}
@@ -356,12 +417,12 @@ async function showInstance(name) {
       <div class="tile"><div class="l">Win rate</div><div class="v">${pct(i.win_rate, 0)}</div></div>
     </div>
     <div class="kv">
-      <span>Strategy</span><span>${esc(i.strategy)} ${Object.keys(i.params || {}).length ? `<span class="muted">${esc(JSON.stringify(i.params))}</span>` : ""}</span>
+      <span>Strategy</span><span class="label-row">${esc(sname(i.strategy))} ${infoBtn(i.strategy)} ${Object.keys(i.params || {}).length ? `<span class="muted">${esc(JSON.stringify(i.params))}</span>` : ""}</span>
       <span>Symbols</span><span>${esc(i.symbols.join(", "))}</span>
       <span>Bars</span><span>${esc(i.interval)} · data from ${esc(i.data_source)}</span>
       <span>Account</span><span>${i.broker === "alpaca" ? `Alpaca paper (${esc(i.alpaca_account)})` : `simulated, started with ${money(i.starting_cash)}`}</span>
       <span>Positions</span><span>${Object.entries(i.positions || {}).map(([s, q]) => `${q > 0 ? "long" : "short"} ${num(Math.abs(q), 4)} ${esc(s)}`).join(", ") || "flat"}</span>
-      <span>Last signal</span><span>${Object.entries(i.last_signals || {}).map(([s, v]) => `${esc(s)}: ${v > 0 ? "long" : v < 0 ? "short" : "flat"} @ ${num(i.last_prices?.[s])}`).join(" · ") || "–"}</span>
+      <span title="What the strategy wanted at the last check">Last signal</span><span>${Object.entries(i.last_signals || {}).map(([s, v]) => `${esc(s)}: ${v > 0 ? "long" : v < 0 ? "short" : "flat"} @ ${num(i.last_prices?.[s])}`).join(" · ") || "–"}</span>
     </div>
     <div><h2>Equity</h2><div id="inst-chart"></div></div>
     <div><h2>Trades</h2>${trades.length ? `<div class="scroll"><table><tr><th>Time</th><th>Symbol</th><th>Side</th><th class="num">Qty</th><th class="num">Price</th><th class="num">P&amp;L</th></tr>
@@ -378,11 +439,13 @@ async function showInstance(name) {
 // ----------------------------------------------------------------- instance editor
 function paramInputs(strat, values = {}) {
   return Object.entries(strat.params).map(([k, d]) => {
-    const v = values[k] ?? d;
-    if (typeof d === "boolean") return `<label><span>${esc(k)}</span><select data-param="${esc(k)}" data-type="bool"><option value="true" ${v ? "selected" : ""}>yes</option><option value="false" ${!v ? "selected" : ""}>no</option></select></label>`;
-    if (typeof d === "number") return `<label><span>${esc(k)}</span><input data-param="${esc(k)}" data-type="num" type="number" step="any" value="${esc(v)}"></label>`;
-    return `<label><span>${esc(k)}</span><input data-param="${esc(k)}" value="${esc(v)}"></label>`;
-  }).join("") || `<div class="muted">This strategy has no parameters.</div>`;
+    const v = values[k] ?? d, help = strat.param_help?.[k];
+    const lab = `<span>${esc(k)} <span class="muted" style="font-weight:400">(default ${esc(d)})</span></span>`;
+    const hint = help ? `<span class="hint">${esc(help)}</span>` : "";
+    if (typeof d === "boolean") return `<label>${lab}<select data-param="${esc(k)}" data-type="bool"><option value="true" ${v ? "selected" : ""}>yes</option><option value="false" ${!v ? "selected" : ""}>no</option></select>${hint}</label>`;
+    if (typeof d === "number") return `<label>${lab}<input data-param="${esc(k)}" data-type="num" type="number" step="any" value="${esc(v)}">${hint}</label>`;
+    return `<label>${lab}<input data-param="${esc(k)}" value="${esc(v)}">${hint}</label>`;
+  }).join("") || `<div class="muted">This strategy has no settings.</div>`;
 }
 function readParams(root) {
   const out = {};
@@ -393,24 +456,26 @@ function readParams(root) {
   return out;
 }
 function stratInfo(s) {
-  return `<div class="note"><b>${esc(s.description)}</b>${s.interval ? `\nNeeds ${esc(s.interval)} bars.` : ""}${s.recommended?.symbols ? ` Default symbols: ${esc(s.recommended.symbols.join(", "))}.` : ""}${s.notes ? "\n\n" + esc(s.notes) : ""}</div>`;
+  return `<div class="note" style="white-space:normal"><div class="label-row" style="justify-content:space-between"><b>${esc(s.explainer?.summary || s.description)}</b>
+    <button type="button" class="small" onclick="showStrategyInfo('${esc(s.name)}')">How it works</button></div>
+    ${s.interval || s.recommended?.symbols ? `<div class="muted" style="margin-top:4px">${s.interval ? `Uses ${esc(s.interval)} bars. ` : ""}${s.recommended?.symbols ? `Default symbols: ${esc(s.recommended.symbols.join(", "))}.` : ""}</div>` : ""}</div>`;
 }
 async function editInstance(inst = null, preset = {}) {
-  if (!STRATS.length) STRATS = await api("/api/strategies");
+  await ensureStrats();
   const isNew = !inst; inst = inst || {};
   const v = { strategy: STRATS.find(s => s.name === "sma_cross")?.name || STRATS[0].name, broker: "sim", alpaca_account: "default", enabled: true, ...inst, ...preset };
   $("#dlg-title").textContent = isNew ? "Add paper-trading instance" : `Edit ${inst.name}`;
   $("#dlg-body").innerHTML = `
     <div class="form">
-      <label class="wide"><span>Strategy</span><select id="f-strategy">${STRATS.map(s => `<option value="${s.name}" ${s.name === v.strategy ? "selected" : ""}>${esc(s.name)} — ${esc(s.description)}</option>`).join("")}</select></label>
+      <label class="wide"><span>Strategy</span><select id="f-strategy">${stratOptions(v.strategy)}</select></label>
       <div class="wide" id="f-info"></div>
-      <label><span>Name (unique)</span><input id="f-name" value="${esc(v.name || "")}" placeholder="e.g. sma-spy"></label>
-      <label><span>Symbols (comma separated)</span><input id="f-symbols" value="${esc((preset.symbols || inst.symbols || []).join?.(", ") ?? "")}"></label>
-      <label><span>Account</span><select id="f-broker"><option value="sim" ${v.broker === "sim" ? "selected" : ""}>Simulated (local)</option><option value="alpaca" ${v.broker === "alpaca" ? "selected" : ""}>Alpaca paper account</option></select></label>
+      <label><span>Name (unique)</span><input id="f-name" value="${esc(v.name || "")}" placeholder="e.g. sma-spy"><span class="hint">Just a label for you.</span></label>
+      <label><span>Symbols (comma separated)</span><input id="f-symbols" value="${esc((preset.symbols || inst.symbols || []).join?.(", ") ?? "")}"><span class="hint">Stock tickers, e.g. SPY (S&amp;P 500 fund), QQQ (Nasdaq 100), AAPL.</span></label>
+      <label><span>Account</span><select id="f-broker"><option value="sim" ${v.broker === "sim" ? "selected" : ""}>Simulated (local)</option><option value="alpaca" ${v.broker === "alpaca" ? "selected" : ""}>Alpaca paper account</option></select><span class="hint">Simulated needs no signup.</span></label>
       <label id="f-acct-w"><span>Alpaca account name</span><input id="f-acct" value="${esc(v.alpaca_account)}" title="default = ALPACA_API_KEY; 'two' = ALPACA_TWO_API_KEY"></label>
       <label><span>Starting cash (simulated)</span><input id="f-cash" type="number" value="${esc(inst.starting_cash ?? 10000)}"></label>
-      <label><span>Data source</span><select id="f-source">${["yfinance", "alpaca"].map(s => `<option ${(v.data_source || "yfinance") === s ? "selected" : ""}>${s}</option>`).join("")}</select></label>
-      <div class="wide"><h2 style="margin:6px 0 8px">Parameters</h2><div class="form" id="f-params"></div></div>
+      <label><span>Data source</span><select id="f-source">${["yfinance", "alpaca"].map(s => `<option ${(v.data_source || "yfinance") === s ? "selected" : ""}>${s}</option>`).join("")}</select><span class="hint">Where prices come from. yfinance = free, no account.</span></label>
+      <div class="wide"><h2 style="margin:6px 0 8px">Settings <span class="muted" style="font-weight:400;font-size:12px">(defaults are fine to start)</span></h2><div class="form" id="f-params"></div></div>
     </div>
     <div id="f-alpaca-note"></div>
     <div class="row"><button class="primary" id="f-save">${isNew ? "Add instance" : "Save"}</button><button onclick="dlg.close()">Cancel</button></div>`;
@@ -451,22 +516,22 @@ function suggestName(s, symbols) {
 
 // ----------------------------------------------------------------- backtest
 pages.backtest = async app => {
-  if (!STRATS.length) STRATS = await api("/api/strategies");
+  await ensureStrats();
   const q = new URLSearchParams(location.hash.split("?")[1] || "");
   const pick = q.get("s") || "sma_cross";
   app.innerHTML = `<h1>Backtest</h1><p class="sub">Replay a strategy on past prices. Signals are decided at a bar's close and filled at the next bar's open, so it can't peek at the future.</p>
     <div class="card"><div class="form">
-      <label class="wide"><span>Strategy</span><select id="b-strategy">${STRATS.map(s => `<option value="${s.name}" ${s.name === pick ? "selected" : ""}>${esc(s.name)} — ${esc(s.description)}</option>`).join("")}</select></label>
+      <label class="wide"><span>Strategy</span><select id="b-strategy">${stratOptions(pick)}</select></label>
       <div class="wide" id="b-info"></div>
-      <label><span>Symbols</span><input id="b-symbols" placeholder="SPY"></label>
+      <label><span>Symbols</span><input id="b-symbols" placeholder="SPY"><span class="hint">Blank = strategy default.</span></label>
       <label><span>Start</span><input id="b-start" type="date" value="2015-01-01"></label>
       <label><span>End (blank = today)</span><input id="b-end" type="date"></label>
       <label><span>Bar size</span><select id="b-interval"><option value="">auto</option>${["1d", "1h", "15m", "5m"].map(x => `<option>${x}</option>`).join("")}</select></label>
       <label><span>Data source</span><select id="b-source"><option>yfinance</option><option>alpaca</option></select></label>
       <label><span>Starting cash</span><input id="b-cash" type="number" value="10000"></label>
-      <label><span>Max leverage (blank = strategy default)</span><input id="b-lev" type="number" step="0.1" placeholder="auto"></label>
-      <label><span>Slippage (bps per fill)</span><input id="b-slip" type="number" step="0.5" value="1"></label>
-      <div class="wide"><details><summary class="muted" style="cursor:pointer">Parameters</summary><div class="form" id="b-params" style="margin-top:10px"></div></details></div>
+      <label><span>Max leverage</span><input id="b-lev" type="number" step="0.1" placeholder="auto"><span class="hint">1 = only your own money. 2 = may borrow up to the same again. Blank = strategy default.</span></label>
+      <label><span>Slippage (bps per trade)</span><input id="b-slip" type="number" step="0.5" value="1"><span class="hint">Trading cost: you buy a bit higher and sell a bit lower than the quote. 1 bp = 0.01%.</span></label>
+      <div class="wide"><details><summary class="muted" style="cursor:pointer">Strategy settings (optional)</summary><div class="form" id="b-params" style="margin-top:10px"></div></details></div>
     </div>
     <div class="row" style="margin-top:14px"><button class="primary" id="b-run">Run backtest</button><span class="muted" id="b-hint"></span></div></div>
     <div id="b-out"></div>`;
@@ -489,6 +554,13 @@ pages.backtest = async app => {
     renderBacktest(r, body);
   });
 };
+function verdict(m) {
+  const r = v => pct(v, 1);
+  let t = `Starting with ${money(m.start_equity)}, this strategy ended with <b>${money(m.end_equity)}</b> (${r(m.total_return)}). Just buying and holding would have made ${r(m.benchmark_return)}. `;
+  if (m.max_drawdown != null) t += `At its worst point it was <b>${r(-m.max_drawdown)} below its previous high</b>; ask yourself if you'd have stuck with it through that. `;
+  if (m.round_trips) t += `It made ${m.round_trips} trades and ${r(m.win_rate)} of them were winners.`;
+  return t;
+}
 const METRICS = [
   ["total_return", "Total return", pct, "gain over the whole period"], ["benchmark_return", "Buy & hold", pct, "just holding the same stocks"],
   ["cagr", "Per year (CAGR)", pct, "average yearly growth"], ["max_drawdown", "Max drawdown", pct, "worst drop from a peak"],
@@ -500,8 +572,9 @@ function renderBacktest(r, body) {
   const m = r.metrics, beat = m.total_return > m.benchmark_return;
   $("#b-out").innerHTML = `
     <div class="card" style="margin-top:14px">
-      <div class="row" style="justify-content:space-between"><div><h2 style="margin:0">${esc(r.title)}</h2><div class="muted" style="font-size:12px">${esc(fmtTime(r.from))} → ${esc(fmtTime(r.to))} · ${esc(r.interval)} bars</div></div>
+      <div class="row" style="justify-content:space-between"><div><h2 style="margin:0" class="label-row">${esc(sname(body.strategy))} on ${esc(r.symbols.join(", "))} ${infoBtn(body.strategy)}</h2><div class="muted" style="font-size:12px">${esc(fmtTime(r.from))} → ${esc(fmtTime(r.to))} · ${esc(r.interval)} bars</div></div>
       <span class="pill ${beat ? "up" : "down"}">${beat ? "beat" : "lost to"} buy &amp; hold</span></div>
+      <p style="margin:12px 0 0">${verdict(m)}</p>
       <div class="tiles" style="margin-top:14px">${METRICS.map(([k, l, f, h]) => `<div class="tile"><div class="l">${l}</div><div class="v ${["total_return", "cagr", "benchmark_return"].includes(k) ? cls(m[k]) : ""}">${f(m[k])}</div><div class="h">${h}</div></div>`).join("")}</div>
       <div id="b-chart" style="margin-top:16px"></div>
       <div class="row" style="margin-top:8px"><button id="b-paper">Paper trade this</button></div>
@@ -530,11 +603,13 @@ pages.compare = async app => {
     const body = { symbols: $("#c-symbols").value, start: $("#c-start").value, interval: $("#c-interval").value, source: $("#c-source").value };
     const r = await api("/api/compare", { method: "POST", body });
     const cols = [["total_return", "Total", pct], ["cagr", "Per year", pct], ["sharpe", "Sharpe", num], ["max_drawdown", "Max DD", pct], ["win_rate", "Win rate", v => pct(v, 0)], ["round_trips", "Trades", v => num(v, 0)], ["exposure", "Invested", v => pct(v, 0)]];
+    await ensureStrats();
     $("#c-out").innerHTML = `<div class="card" style="margin-top:14px"><div class="scroll"><table><tr><th>Strategy</th>${cols.map(c => `<th class="num">${c[1]}</th>`).join("")}<th></th></tr>
-      ${r.rows.map(row => `<tr style="${row.strategy === "buy_and_hold" ? "background:var(--panel-2)" : ""}"><td><b>${esc(row.strategy)}</b></td>${cols.map(([k, , f]) => `<td class="num ${["total_return", "cagr"].includes(k) ? cls(row[k]) : ""}">${f(row[k])}</td>`).join("")}<td><a href="#/backtest?s=${encodeURIComponent(row.strategy)}">details</a></td></tr>`).join("")}</table></div>
-      ${r.skipped.length ? `<p class="muted" style="margin-bottom:0">Skipped (need other bar sizes): ${esc(r.skipped.join(", "))}</p>` : ""}</div>
+      ${r.rows.map(row => `<tr style="${row.strategy === "buy_and_hold" ? "background:var(--panel-2)" : ""}"><td><span class="label-row"><b>${esc(sname(row.strategy))}</b>${infoBtn(row.strategy)}</span></td>${cols.map(([k, , f]) => `<td class="num ${["total_return", "cagr"].includes(k) ? cls(row[k]) : ""}">${f(row[k])}</td>`).join("")}<td><a href="#/backtest?s=${encodeURIComponent(row.strategy)}">details</a></td></tr>`).join("")}</table></div>
+      ${r.skipped.length ? `<p class="muted" style="margin-bottom:0">Skipped (need other bar sizes): ${esc(r.skipped.map(sname).join(", "))}</p>` : ""}
+      <p class="muted" style="font-size:12px;margin-bottom:0"><b>Total</b> = gain over the whole period · <b>Sharpe</b> = return vs bumpiness (higher is better, above 1 is good) · <b>Max DD</b> = worst drop from a high · <b>Invested</b> = share of time holding stocks</p></div>
       <div class="card" style="margin-top:14px"><h2>Growth</h2><div id="c-chart"></div></div>`;
-    lineChart($("#c-chart"), r.rows.map(row => ({ name: row.strategy, color: row.strategy === "buy_and_hold" ? "#94a3b8" : undefined,
+    lineChart($("#c-chart"), r.rows.map(row => ({ name: sname(row.strategy), color: row.strategy === "buy_and_hold" ? "#94a3b8" : undefined,
       points: row.curve })));
   });
 };
@@ -542,14 +617,12 @@ pages.compare = async app => {
 // ----------------------------------------------------------------- strategies
 pages.strategies = async app => {
   STRATS = await api("/api/strategies");
-  app.innerHTML = `<h1>Strategies</h1><p class="sub">To add one (e.g. from TikTok), copy <code>tradebot/strategies/social/_template.py</code>, then restart the dashboard.</p>
+  app.innerHTML = `<h1>Strategies</h1><p class="sub">Each strategy is a set of rules for when to buy and sell. Press <b>How it works</b> for a plain-language explanation. Found a new one on TikTok? Ask Claude to add it.</p>
     <div class="grid cols-3">${STRATS.map(s => `<div class="card" style="display:grid;gap:8px;align-content:start">
-      <div class="row" style="justify-content:space-between"><b>${esc(s.name)}</b><span class="pill">${esc(s.interval || "any bars")}</span></div>
-      <div>${esc(s.description)}</div>
-      <div class="muted" style="font-size:12px">source: ${esc(s.source || "–")}</div>
-      <div style="font-size:12px"><span class="muted">params:</span> <code>${esc(JSON.stringify(s.params))}</code></div>
-      ${s.notes ? `<details class="help"><summary>Notes</summary><p style="white-space:pre-wrap">${esc(s.notes)}</p></details>` : ""}
-      <div class="row"><a class="btn" href="#/backtest?s=${encodeURIComponent(s.name)}" style="text-decoration:none">Backtest</a><button onclick='editInstance(null,{strategy:${JSON.stringify(s.name)}})'>Paper trade</button></div>
+      <div class="row" style="justify-content:space-between;flex-wrap:nowrap;align-items:flex-start"><b style="font-size:15px">${esc(s.display_name)}</b><span class="pill" title="Candle size it trades on">${esc(s.interval ? s.interval.replace("m", "-min") + " candles" : "daily candles")}</span></div>
+      <div>${esc(s.explainer?.summary || s.description)}</div>
+      <div class="muted" style="font-size:12px">${s.source.startsWith("classic") ? "Classic strategy" : "From social media"}</div>
+      <div class="row"><button class="primary" onclick="showStrategyInfo('${esc(s.name)}')">How it works</button><a class="btn" href="#/backtest?s=${encodeURIComponent(s.name)}" style="text-decoration:none">Backtest</a><button onclick='editInstance(null,{strategy:${JSON.stringify(s.name)}})'>Paper trade</button></div>
     </div>`).join("")}</div>`;
 };
 
@@ -570,6 +643,52 @@ pages.settings = async app => {
       <details><summary>Open it on my phone / my own domain</summary><p>See <code>docs/CLOUDFLARE.md</code> in the project folder. It shows how to put this dashboard on a subdomain with a login, using a free Cloudflare Tunnel.</p></details>
     </div>`;
   $("#s-save").onclick = e => busy(e.currentTarget, async () => { await api("/api/config", { method: "PUT", body: { text: $("#s-text").value } }); toast("Saved"); });
+};
+
+
+// ----------------------------------------------------------------- guide
+const GLOSSARY = [
+  ["Paper trading", "Trading with fake money on live prices. It tests a strategy for real without risking anything."],
+  ["Backtest", "Replaying a strategy on past prices to see how it would have done. Useful, but the past doesn't guarantee the future."],
+  ["Instance", "One robot trader in this app: one strategy, some symbols and its own pretend account. You can run many side by side."],
+  ["Symbol / ticker", "A stock's short code. SPY is a fund that holds the 500 biggest US companies (the S&P 500), QQQ holds the 100 biggest Nasdaq companies (tech-heavy), AAPL is Apple."],
+  ["Long", "Owning a stock. You make money if it goes up."],
+  ["Short", "Borrowing a stock and selling it, then buying it back later. You make money if it goes down. Losses can be bigger than with long positions."],
+  ["Flat", "Holding cash, no position."],
+  ["Candle / bar", "The price summary for a period of time: where it opened, the high, the low and where it closed. \"5m bars\" = one candle per 5 minutes, \"1d\" = one per day."],
+  ["Moving average", "The average price over the last N bars. It smooths out noise to show the trend. EMA is a version that gives recent bars more weight."],
+  ["Stop-loss", "An automatic exit if the price moves against you by a set amount, to cap the loss. A trailing stop moves along as the trade goes your way."],
+  ["Leverage", "Trading with borrowed money. 2× means positions can be up to twice your account. Gains and losses both get bigger."],
+  ["Slippage", "The small extra cost of every trade: you usually buy slightly higher and sell slightly lower than the quoted price."],
+  ["Total return", "How much the account grew (or shrank) over the whole period."],
+  ["CAGR / per year", "The average yearly growth rate. Makes periods of different lengths comparable."],
+  ["Max drawdown", "The worst drop from a previous high. −30% means at some point you were 30% below your best. The number that tests your nerves."],
+  ["Sharpe ratio", "Return divided by how bumpy the ride was. Higher is better. Above 1 is good, and most strategies and the stock market land around 0.3–1."],
+  ["Win rate", "Share of trades that made money. A low win rate is fine if the winners are much bigger than the losers, as with breakout strategies."],
+  ["Profit factor", "Total money won ÷ total money lost. Above 1 = profitable."],
+  ["Buy & hold", "Just buying and never selling. It's the benchmark: a strategy that can't beat it isn't worth the effort."],
+  ["Market hours", "US stocks trade 9:30–16:00 New York time, Monday to Friday (except holidays). The bot only trades then."],
+  ["Overfitting", "Tweaking settings until the backtest looks amazing. It usually just memorises the past and fails live. Be suspicious of settings that only work at one exact value."],
+];
+pages.guide = async app => {
+  app.innerHTML = `<h1>Guide</h1><p class="sub">Everything you need to use this app. No trading experience required.</p>
+    <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(320px,1fr));align-items:start">
+      <div class="card"><h2>Getting started</h2><ol class="steps">
+        <li>Open <a href="#/strategies">Strategies</a> and read a couple with <b>How it works</b>.</li>
+        <li>Try one in <a href="#/backtest">Backtest</a> on SPY. Look at <b>Total return vs Buy &amp; hold</b> and <b>Max drawdown</b>.</li>
+        <li>Like it? Press <b>Paper trade this</b>. It becomes a card under <a href="#/">Paper trading</a>.</li>
+        <li>Press <b>Start</b> on the Paper trading page and keep this window open during US market hours.</li>
+        <li>Check back over days and weeks. Compare each card's return with the <b>benchmark-spy</b> card (buy &amp; hold).</li>
+      </ol></div>
+      <div class="card"><h2>Good habits</h2><ul class="steps">
+        <li><b>Always compare with buy &amp; hold.</b> Most strategies lose to it, especially after costs.</li>
+        <li><b>Test over long periods</b> (10+ years for daily strategies) that include crashes, like 2020 and 2022.</li>
+        <li><b>Test on more than one symbol.</b> A strategy that only works on one stock was probably luck.</li>
+        <li><b>Paper trade for weeks</b> before even thinking about real money. Live results are usually worse than backtests.</li>
+        <li><b>TikTok results are marketing.</b> Nobody posts the strategies that failed.</li>
+      </ul></div>
+    </div>
+    <div class="card" style="margin-top:14px"><h2>Words you'll see</h2><dl class="gloss">${GLOSSARY.map(([t, d]) => `<dt>${esc(t)}</dt><dd>${esc(d)}</dd>`).join("")}</dl></div>`;
 };
 
 // header market badge on every page

@@ -29,6 +29,14 @@ class MyStrategy(Strategy):
     name = "my_strategy"
     description = "What it does in one line."
     source = "tiktok @creator, video link"
+    display_name = "TikTok: My Strategy"          # what the dashboard shows
+    explainer = {                                 # the dashboard's info button
+        "summary": "One sentence a beginner understands.",
+        "how": "The rules in plain words.",
+        "good": "Markets where it should do well.",
+        "bad": "Markets where it should struggle.",
+    }
+    param_help = {"rsi_period": "What changing this does."}
     default_params = {"rsi_period": 14, "buy_below": 30, "sell_above": 60, "trend": 200}
 
     def generate_signals(self, df: pd.DataFrame) -> pd.Series:

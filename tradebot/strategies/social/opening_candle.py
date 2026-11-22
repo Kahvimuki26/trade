@@ -46,6 +46,35 @@ class OpeningCandle(Strategy):
     description = "First 5-min candle vs fast EMA: long above, short below. Wide trailing stop, 1% risk."
     source = "TikTok ('If I had to start from zero again, I'd only learn this one strategy')"
     interval = "5m"
+    display_name = "TikTok: First 5-Minute Candle"
+    explainer = {
+        "summary": "Every morning the first 5 minutes of trading pick a direction, up or down. It then holds "
+                   "with a wide safety exit that follows the price.",
+        "how": "At 9:30 New York time, it waits for the first 5-minute candle (the price bar covering "
+               "9:30-9:35) to finish. If that candle closed above the fast moving average (a 9-bar EMA on the "
+               "5-minute chart), it buys. If it closed below, it short-sells, which means betting on a fall. "
+               "It then sets a stop-loss (an automatic exit) 1.5x the stock's average daily range away. As "
+               "the trade goes its way, the stop follows it (a 'trailing stop'), locking in profit. If the "
+               "next morning's first candle points the other way, it flips sides.",
+        "sizing": "Position size is set so that hitting the stop loses about 1% of the account. A wider "
+                  "stop means a smaller position. That's how it can be wrong almost half the time and still "
+                  "come out ahead: losses are capped and winners can run.",
+        "good": "Days when the open sets the tone and the move keeps going.",
+        "bad": "Choppy days when the open fakes one way and then reverses. Overnight gaps can jump past "
+               "the stop and lose more than 1%. Short selling and leverage (up to 2x the account) add risk.",
+        "caveat": "The video's +505% isn't verified, and it probably came from futures, not stocks. "
+                  "Backtest it yourself with Alpaca data.",
+    }
+    param_help = {
+        "ma_period": "Length of the fast moving average, in 5-minute bars.",
+        "ma_type": "ema (weights recent bars more) or sma (plain average).",
+        "atr_days": "Days used to measure the stock's normal daily range.",
+        "stop_atr": "Stop distance in daily ranges. Bigger means fewer stop-outs, but smaller positions.",
+        "trail": "Should the stop follow the price as the trade goes your way?",
+        "risk": "Fraction of the account lost if the stop is hit (0.01 = 1%).",
+        "reverse_on_opposite": "Flip sides when the next morning disagrees? If no, only the stop exits.",
+        "allow_short": "Allow betting on falls? If no, it's long-only.",
+    }
     default_params = {
         "ma_period": 9,            # fast EMA length, in 5-minute bars
         "ma_type": "ema",          # "ema" or "sma"
