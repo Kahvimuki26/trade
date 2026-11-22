@@ -4,7 +4,11 @@
 #   tradebot paper -i sma-spy  # run just one
 #   tradebot status            # how is everyone doing?
 #
-# Any key under `defaults` can be overridden per instance.
+# Settings are picked in this order (later wins):
+#   built-in defaults  <  `defaults:` below  <  what the strategy needs  <  the instance itself
+# "What the strategy needs" = its bar size, symbols, leverage etc. See them with:
+#   tradebot info <strategy>
+# so e.g. opening_candle automatically runs on 5m bars with SPY+QQQ unless you say otherwise.
 
 defaults:
   data_source: yfinance     # yfinance (no keys) | alpaca (needs keys in env)
@@ -14,9 +18,11 @@ defaults:
   slippage_bps: 1
   fractional: true
   allocation: 1.0           # fraction of equity to use, split equally across symbols
+  max_leverage: 1.0         # max exposure / equity (strategies may recommend more)
+  broker: sim               # sim = local simulated account | alpaca = Alpaca paper account
   market_hours_only: true
   daily_trade_after: "15:45"  # daily bars: decide near the close (New York time)
-  poll_seconds: 300
+  poll_seconds: 60          # how often to check (seconds)
   state_dir: state
 
 instances:
@@ -49,6 +55,22 @@ instances:
   - name: tiktok-ema-spy
     strategy: ema_cross_trend
     symbols: [SPY]
+
+  # TikTok: first 5-minute candle vs fast EMA. Bar size, symbols and leverage
+  # come from the strategy itself (tradebot info opening_candle).
+  - name: tiktok-opening-candle
+    strategy: opening_candle
+
+  # Same strategy, but orders go to your Alpaca PAPER account so you see them in
+  # the Alpaca app. Needs ALPACA_API_KEY / ALPACA_SECRET_KEY in .env.
+  # One Alpaca paper account per instance: for a second one use
+  # alpaca_account: two  ->  ALPACA_TWO_API_KEY / ALPACA_TWO_SECRET_KEY
+  - name: alpaca-opening-candle
+    strategy: opening_candle
+    broker: alpaca
+    data_source: alpaca
+    alpaca_account: default
+    enabled: false
 
   # Intraday example (disabled). Flip `enabled` to try it.
   - name: ema-spy-15m

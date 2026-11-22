@@ -12,14 +12,16 @@ All providers return a DataFrame indexed by timestamp with lowercase columns
 
 from __future__ import annotations
 
+import logging
 import os
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time as dtime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
 
 COLUMNS = ["open", "high", "low", "close", "volume"]
+log = logging.getLogger("tradebot")
 
 
 def _clean(df: pd.DataFrame) -> pd.DataFrame:
@@ -53,6 +55,14 @@ class YFinanceProvider(DataProvider):
         import yfinance as yf
 
         n, unit = parse_interval(interval)
+        if unit in ("m", "h"):  # Yahoo only keeps limited intraday history
+            max_days = 7 if (unit == "m" and n == 1) else 59 if unit == "m" else 729
+            earliest = utcnow() - timedelta(days=max_days)
+            st = pd.Timestamp(start)
+            if (st.tz_localize("UTC") if st.tzinfo is None else st) < earliest:
+                log.warning("Yahoo only has ~%d days of %s bars; starting at %s. Use --source alpaca "
+                            "for longer intraday history.", max_days, interval, earliest.date())
+                start = earliest
         df = yf.Ticker(symbol).history(
             start=start, end=end, interval=f"{n}{unit}", auto_adjust=True, actions=False
         )
@@ -76,6 +86,16 @@ class AlpacaProvider(DataProvider):
         self.client = StockHistoricalDataClient(api_key, secret_key)
         self.feed = (feed or os.environ.get("ALPACA_DATA_FEED", "iex")).lower()
 
+    def _end(self, end):
+        # The free plan can read SIP (full market) data only if it's >15 minutes old.
+        if end is not None:
+            end = pd.Timestamp(end)
+            end = end.tz_localize("UTC") if end.tzinfo is None else end
+        if self.feed == "sip":
+            latest = pd.Timestamp(utcnow() - timedelta(minutes=16))
+            end = latest if end is None else min(end, latest)
+        return end.to_pydatetime() if end is not None else None
+
     def get_bars(self, symbol, start, end=None, interval="1d"):
         from alpaca.data.enums import Adjustment, DataFeed
         from alpaca.data.requests import StockBarsRequest
@@ -88,7 +108,7 @@ class AlpacaProvider(DataProvider):
             symbol_or_symbols=symbol,
             timeframe=TimeFrame(n, tf_unit),
             start=pd.Timestamp(start).to_pydatetime(),
-            end=pd.Timestamp(end).to_pydatetime() if end else None,
+            end=self._end(end),
             adjustment=Adjustment.ALL,
             feed=DataFeed(self.feed),
         )
@@ -96,8 +116,12 @@ class AlpacaProvider(DataProvider):
         if bars.empty:
             raise ValueError(f"No data from Alpaca for {symbol} ({interval}, start={start})")
         df = bars.xs(symbol, level="symbol") if isinstance(bars.index, pd.MultiIndex) else bars
+        df.index = pd.DatetimeIndex(df.index).tz_convert("America/New_York")
         if unit in ("d", "wk"):
-            df.index = df.index.tz_convert("America/New_York").tz_localize(None).normalize()
+            df.index = df.index.tz_localize(None).normalize()
+        else:  # regular session only (Alpaca also returns pre/post-market bars)
+            t = df.index.time
+            df = df[(t >= dtime(9, 30)) & (t < dtime(16, 0))]
         return _clean(df)
 
 
@@ -111,7 +135,14 @@ class CsvProvider(DataProvider):
         path = self.directory / f"{symbol}.csv"
         df = pd.read_csv(path)
         ts_col = next(c for c in df.columns if c.lower() in ("date", "datetime", "timestamp", "time"))
-        df.index = pd.to_datetime(df.pop(ts_col))
+        raw = df.pop(ts_col)
+        try:
+            idx = pd.DatetimeIndex(pd.to_datetime(raw))
+        except ValueError:  # mixed UTC offsets, e.g. -05:00 / -04:00 across daylight saving
+            idx = pd.DatetimeIndex(pd.to_datetime(raw, utc=True)).tz_convert("America/New_York")
+        if idx.tz is not None:
+            idx = idx.tz_convert("America/New_York")
+        df.index = idx
         df = _clean(df)
         if start is not None:
             df = df[df.index >= _match_tz(start, df.index)]
@@ -144,8 +175,8 @@ def get_provider(name: str, **kwargs) -> DataProvider:
 def default_lookback(interval: str) -> timedelta:
     """How much history to fetch for live signals (enough for a 200-bar indicator)."""
     n, unit = parse_interval(interval)
-    if unit == "m":
-        return timedelta(days=min(7 if n == 1 else 59, max(5, n * 3)))
+    if unit == "m":  # as much as Yahoo allows: daily-ATR style rules need weeks of intraday bars
+        return timedelta(days=7 if n == 1 else 59)
     if unit == "h":
         return timedelta(days=120 * n)
     if unit == "wk":

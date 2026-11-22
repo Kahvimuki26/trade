@@ -1,42 +1,45 @@
 import pandas as pd
 import pytest
 
-from tradebot.strategies import get_strategy, latch, list_strategies
+from tradebot.strategies import get_strategy, latch, list_strategies, strategy_class
 
-from .conftest import make_bars
+from .conftest import bars_for
 
 ALL = [s.name for s in list_strategies()]
 
 
 def test_registry_has_classics():
     for name in ["buy_and_hold", "sma_cross", "rsi_reversion", "macd_cross",
-                 "bollinger_reversion", "donchian_breakout", "ema_cross_trend"]:
+                 "bollinger_reversion", "donchian_breakout", "ema_cross_trend", "opening_candle"]:
         assert name in ALL
     assert "my_strategy" not in ALL  # template is not registered
 
 
 @pytest.mark.parametrize("name", ALL)
-def test_signals_are_valid(name, bars):
-    sig = get_strategy(name).signals(bars)
-    assert sig.index.equals(bars.index)
-    assert set(sig.unique()) <= {-1, 0, 1}
+def test_signals_are_valid(name):
+    bars = bars_for(strategy_class(name))
+    t = get_strategy(name).targets(bars)
+    assert t.index.equals(bars.index)
+    assert set(t["signal"].unique()) <= {-1, 0, 1}
+    assert (t["weight"].dropna() >= 0).all()
 
 
 @pytest.mark.parametrize("name", ALL)
 def test_no_lookahead(name):
     """Signals up to bar t must not change when future bars are appended."""
-    full = make_bars(n=700, seed=3)
+    full = bars_for(strategy_class(name), seed=3)
     strat = get_strategy(name)
-    full_sig = strat.signals(full)
-    for cut in (250, 400, 699):
-        partial = strat.signals(full.iloc[:cut])
-        pd.testing.assert_series_equal(partial, full_sig.iloc[:cut], check_names=False,
-                                       obj=f"{name} signals truncated at {cut}")
+    full_t = strat.targets(full)
+    n = len(full)
+    for cut in (n // 3, n // 2 + 7, n - 1):
+        partial = strat.targets(full.iloc[:cut])
+        pd.testing.assert_frame_equal(partial, full_t.iloc[:cut],
+                                      obj=f"{name} signals/weights truncated at {cut}")
 
 
 @pytest.mark.parametrize("name", ALL)
 def test_some_trading_happens(name):
-    sig = get_strategy(name).signals(make_bars(n=1500, seed=7))
+    sig = get_strategy(name).signals(bars_for(strategy_class(name), seed=7, size="large"))
     assert sig.abs().sum() > 0
 
 

@@ -43,30 +43,34 @@ def run_backtest(
     slippage_bps: float = 1.0,
     fractional: bool = True,
     allocation: float = 1.0,
+    max_leverage: float = 1.0,
 ) -> BacktestResult:
     if not data:
         raise ValueError("No data to backtest")
     symbols = list(data)
-    signals = {s: strategy.signals(df) for s, df in data.items()}
+    targets = {s: strategy.targets(df) for s, df in data.items()}
+    signals = {s: t["signal"] for s, t in targets.items()}
 
     index = pd.DatetimeIndex(sorted(set().union(*(df.index for df in data.values()))))
     opens = {s: data[s]["open"].reindex(index).to_numpy() for s in symbols}
     closes = {s: data[s]["close"].reindex(index).to_numpy() for s in symbols}
     sigs = {s: signals[s].reindex(index).to_numpy(dtype=float) for s in symbols}
+    wts = {s: targets[s]["weight"].reindex(index).to_numpy(dtype=float) for s in symbols}
 
     pf = Portfolio(cash=cash, commission=commission, slippage_bps=slippage_bps, fractional=fractional)
-    weights = {s: 1 / len(symbols) for s in symbols}
-    pending: dict[str, int] = {}
+    equal = 1 / len(symbols)
+    pending: dict[str, tuple[int, float]] = {}
     last_close: dict[str, float] = {}
     equity = np.empty(len(index))
     invested_bars = 0
 
     for i, ts in enumerate(index):
         # 1) execute yesterday's decisions at today's open
-        tradable = {s: d for s, d in pending.items() if not np.isnan(opens[s][i])}
+        tradable = {s: d for s, (d, _) in pending.items() if not np.isnan(opens[s][i])}
         if tradable:
             open_prices = {s: opens[s][i] for s in tradable}
-            pf.rebalance(tradable, {**last_close, **open_prices}, ts, allocation, weights)
+            weights = {s: equal if np.isnan(pending[s][1]) else pending[s][1] for s in tradable}
+            pf.rebalance(tradable, {**last_close, **open_prices}, ts, allocation, weights, max_leverage)
             for s in tradable:
                 pending.pop(s)
 
@@ -75,7 +79,7 @@ def run_backtest(
             c = closes[s][i]
             if not np.isnan(c):
                 last_close[s] = c
-                pending[s] = int(sigs[s][i]) if not np.isnan(sigs[s][i]) else 0
+                pending[s] = (int(sigs[s][i]) if not np.isnan(sigs[s][i]) else 0, wts[s][i])
         equity[i] = pf.equity(last_close) if last_close else cash
         invested_bars += bool(pf.positions)
 

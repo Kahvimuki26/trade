@@ -45,7 +45,7 @@ def drop_incomplete_bar(df: pd.DataFrame, interval: str, now: datetime) -> pd.Da
 
 
 class PaperInstance:
-    def __init__(self, cfg: InstanceConfig, state_dir: str | Path = "state"):
+    def __init__(self, cfg: InstanceConfig, state_dir: str | Path = "state", broker=None):
         self.cfg = cfg
         self.strategy = get_strategy(cfg.strategy, **cfg.params)
         self.path = Path(state_dir) / f"{cfg.name}.json"
@@ -53,24 +53,48 @@ class PaperInstance:
         self.last_signals: dict[str, int] = {}
         self.last_prices: dict[str, float] = {}
         self.created = utcnow().isoformat()
-        if self.path.exists():
-            self._load()
+        state = json.loads(self.path.read_text()) if self.path.exists() else None
+
+        if broker is not None:
+            self.broker = broker
+        elif cfg.broker == "alpaca":
+            from .alpaca_broker import AlpacaPaperBroker
+
+            self.broker = AlpacaPaperBroker(cfg.alpaca_account, fractional=cfg.fractional)
+        elif state and "portfolio" in state:
+            self.broker = Portfolio.from_dict(state["portfolio"])
         else:
-            self.portfolio = Portfolio(
+            self.broker = Portfolio(
                 cash=cfg.starting_cash,
                 commission=cfg.commission,
                 slippage_bps=cfg.slippage_bps,
                 fractional=cfg.fractional,
             )
+        if state:
+            self._load(state)
+
+    @property
+    def is_sim(self) -> bool:
+        return isinstance(self.broker, Portfolio)
+
+    # backwards-compatible name
+    @property
+    def portfolio(self):
+        return self.broker
 
     # ---------------------------------------------------------------- state
-    def _load(self) -> None:
-        s = json.loads(self.path.read_text())
-        self.portfolio = Portfolio.from_dict(s["portfolio"])
+    def _load(self, s: dict) -> None:
         self.equity_history = [tuple(x) for x in s.get("equity_history", [])]
         self.last_signals = s.get("last_signals", {})
         self.last_prices = s.get("last_prices", {})
         self.created = s.get("created", self.created)
+        if not self.is_sim:
+            self.broker.trades = [Trade(**t) for t in s.get("trades", [])]
+        if s.get("broker", "sim") != self.cfg.broker:
+            raise RuntimeError(
+                f"[{self.cfg.name}] state was created with broker '{s.get('broker', 'sim')}' but the config "
+                f"now says '{self.cfg.broker}'. Run `tradebot reset {self.cfg.name}` first."
+            )
         if s.get("strategy") != self.cfg.strategy or s.get("params") != self.strategy.params:
             log.warning(
                 "[%s] config changed since this state was created (%s %s -> %s %s). "
@@ -79,20 +103,26 @@ class PaperInstance:
                 self.cfg.strategy, self.strategy.params, self.cfg.name,
             )
 
-    def save(self) -> None:
+    def save(self, positions: dict[str, float] | None = None) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         state = {
             "name": self.cfg.name,
             "strategy": self.cfg.strategy,
             "params": self.strategy.params,
             "symbols": self.cfg.symbols,
+            "interval": self.cfg.interval,
+            "broker": self.cfg.broker,
             "created": self.created,
-            "starting_cash": self.cfg.starting_cash,
+            "starting_cash": (self.equity_history[0][1] if self.equity_history and not self.is_sim
+                              else self.cfg.starting_cash),
             "last_signals": self.last_signals,
             "last_prices": self.last_prices,
             "equity_history": self.equity_history,
-            "portfolio": self.portfolio.to_dict(),
+            "positions": positions if positions is not None else dict(self.broker.positions),
+            "trades": [t.__dict__ for t in self.broker.trades],
         }
+        if self.is_sim:
+            state["portfolio"] = self.broker.to_dict()
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps(state, indent=1, default=str))
         tmp.replace(self.path)
@@ -109,23 +139,26 @@ class PaperInstance:
 
     def tick(self, fetch: Fetch, now: datetime | None = None) -> list[Trade]:
         now = now or utcnow()
-        targets, prices = {}, {}
+        targets, prices, weights = {}, {}, {}
+        equal = 1 / len(self.cfg.symbols)
         for sym in self.cfg.symbols:
             raw = fetch(self.cfg, sym)
             prices[sym] = float(raw["close"].iloc[-1])  # latest price, incl. live bar
             bars = drop_incomplete_bar(raw, self.cfg.interval, now)
-            sig = self.strategy.signals(bars)
-            targets[sym] = int(sig.iloc[-1]) if len(sig) else 0
+            t = self.strategy.targets(bars)
+            targets[sym] = int(t["signal"].iloc[-1]) if len(t) else 0
+            w = float(t["weight"].iloc[-1]) if len(t) else float("nan")
+            weights[sym] = equal if w != w else w  # NaN -> equal split
 
-        trades = self.portfolio.rebalance(targets, prices, now.isoformat(timespec="seconds"),
-                                          allocation=self.cfg.allocation)
+        trades = self.broker.rebalance(targets, prices, now.isoformat(timespec="seconds"),
+                                       allocation=self.cfg.allocation, weights=weights,
+                                       max_leverage=self.cfg.max_leverage)
         for t in trades:
             pnl = f"  pnl {t.realized_pnl:+,.2f}" if t.realized_pnl is not None else ""
             log.info("[%s] %s %.4f %s @ %.2f%s", self.cfg.name, t.side, abs(t.qty), t.symbol, t.price, pnl)
 
         self.last_signals, self.last_prices = targets, prices
-        all_prices = {**{s: self.portfolio.avg_price[s] for s in self.portfolio.positions}, **prices}
-        self.equity_history.append((now.isoformat(timespec="seconds"), self.portfolio.equity(all_prices)))
+        self.equity_history.append((now.isoformat(timespec="seconds"), self.broker.current_equity(prices)))
         self.save()
         return trades
 

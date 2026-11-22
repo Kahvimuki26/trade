@@ -18,7 +18,7 @@ from .backtest import run_backtest
 from .config import load_config
 from .data import get_provider
 from .metrics import fmt
-from .strategies import get_strategy, list_strategies
+from .strategies import get_strategy, list_strategies, strategy_class
 
 DEFAULT_CONFIG = "configs/instances.yaml"
 
@@ -45,32 +45,62 @@ def parse_params(pairs: list[str]) -> dict:
     return out
 
 
-def load_data(args, symbols: list[str]) -> dict:
+def load_data(args, symbols: list[str], interval: str) -> dict:
     kwargs = {"directory": args.csv_dir} if args.source == "csv" else {}
     provider = get_provider(args.source, **kwargs)
-    return {s.upper(): provider.get_bars(s.upper(), start=args.start, end=args.end, interval=args.interval)
+    return {s.upper(): provider.get_bars(s.upper(), start=args.start, end=args.end, interval=interval)
             for s in symbols}
 
 
-def bt_kwargs(args) -> dict:
+def bt_kwargs(args, cls=None) -> dict:
+    lev = args.max_leverage
+    if lev is None:
+        lev = (cls.recommended.get("max_leverage", 1.0) if cls else 1.0)
     return dict(cash=args.cash, commission=args.commission, slippage_bps=args.slippage_bps,
-                fractional=not args.whole_shares)
+                fractional=not args.whole_shares, max_leverage=lev)
 
 
 # ------------------------------------------------------------------ commands
 def cmd_list(args) -> None:
-    rows = [{"name": s.name, "source": s.source, "params": json.dumps(s.default_params),
-             "description": s.description} for s in list_strategies()]
+    rows = [{"name": s.name, "bars": s.interval or "any", "description": s.description}
+            for s in list_strategies()]
     print(table(rows))
+    print("\nMore about one:  tradebot info <name>")
+
+
+def cmd_info(args) -> None:
+    cls = strategy_class(args.strategy)
+    print(f"\n{cls.name}\n{'=' * len(cls.name)}")
+    print(cls.description)
+    print(f"\nsource:      {cls.source or '-'}")
+    print(f"bar size:    {cls.interval or 'any (default 1d)'}")
+    if cls.recommended:
+        print("uses:        " + ", ".join(f"{k}={v}" for k, v in cls.recommended.items()))
+    print("parameters:  " + (", ".join(f"{k}={v!r}" for k, v in cls.default_params.items()) or "none"))
+    if cls.notes:
+        print("\nnotes:")
+        for line in cls.notes.splitlines():
+            print(f"  {line}")
+    sym = " ".join(cls.recommended.get("symbols", ["SPY"]))
+    src = " --source alpaca" if cls.interval and cls.interval.endswith("m") else ""
+    print(f"\ntry:  tradebot backtest {cls.name} {sym}{src}\n")
 
 
 def cmd_backtest(args) -> None:
     strategy = get_strategy(args.strategy, **parse_params(args.param))
-    data = load_data(args, args.symbols)
-    res = run_backtest(strategy, data, **bt_kwargs(args))
+    cls = type(strategy)
+    interval = args.interval or cls.interval or "1d"
+    symbols = args.symbols or cls.recommended.get("symbols")
+    if not symbols:
+        raise SystemExit("Give at least one symbol, e.g.  tradebot backtest sma_cross SPY")
+    if cls.interval and interval != cls.interval:
+        print(f"warning: {cls.name} is designed for {cls.interval} bars, running on {interval}")
+    data = load_data(args, symbols, interval)
+    res = run_backtest(strategy, data, **bt_kwargs(args, cls))
     first = min(df.index[0] for df in data.values()).date()
     last = max(df.index[-1] for df in data.values()).date()
-    print(f"\n{strategy!r} on {', '.join(data)}  |  {first} -> {last}  |  {args.interval} bars\n")
+    print(f"\n{strategy!r} on {', '.join(data)}  |  {first} -> {last}  |  {interval} bars  |  "
+          f"max leverage {bt_kwargs(args, cls)['max_leverage']}\n")
     for k, v in res.metrics.items():
         print(f"  {k:<18} {fmt(k, v)}")
     if args.trades:
@@ -85,11 +115,14 @@ def cmd_backtest(args) -> None:
 
 
 def cmd_compare(args) -> None:
-    data = load_data(args, args.symbols)
+    interval = args.interval or "1d"
     names = args.strategies or [s.name for s in list_strategies()]
+    skipped = [n for n in names if strategy_class(n).interval not in (None, interval)]
+    names = [n for n in names if n not in skipped]
+    data = load_data(args, args.symbols, interval)
     rows = []
     for name in names:
-        res = run_backtest(get_strategy(name), data, **bt_kwargs(args))
+        res = run_backtest(get_strategy(name), data, **bt_kwargs(args, strategy_class(name)))
         m = res.metrics
         rows.append({"strategy": name, **{k: m[k] for k in
                      ("total_return", "cagr", "sharpe", "max_drawdown", "win_rate", "round_trips", "exposure")}})
@@ -100,6 +133,10 @@ def cmd_compare(args) -> None:
     print(f"\n{', '.join(data)}  |  {first} -> {max(df.index[-1] for df in data.values()).date()}"
           f"  |  sorted by {key}\n")
     print(table([{k: fmt(k, v) if k != "strategy" else v for k, v in r.items()} for r in rows]))
+    if skipped:
+        print(f"\nSkipped (need other bar sizes): "
+              + ", ".join(f"{n} ({strategy_class(n).interval})" for n in skipped)
+              + f". Try --interval {strategy_class(skipped[0]).interval}")
 
 
 def cmd_paper(args) -> None:
@@ -115,21 +152,24 @@ def cmd_status(args) -> None:
     for inst in cfg.instances:
         path = Path(cfg.state_dir) / f"{inst.name}.json"
         if not path.exists():
-            rows.append({"instance": inst.name, "strategy": inst.strategy, "symbols": ",".join(inst.symbols),
+            rows.append({"instance": inst.name, "strategy": inst.strategy, "broker": inst.broker,
+                         "symbols": ",".join(inst.symbols),
                          "equity": "-", "return": "not started", "positions": "", "orders": 0, "last update": ""})
             continue
         s = json.loads(path.read_text())
         hist = s.get("equity_history") or [[None, s["starting_cash"]]]
         eq = hist[-1][1]
-        pos = s["portfolio"]["positions"]
+        pos = s.get("positions", s.get("portfolio", {}).get("positions", {}))
+        ntrades = len(s.get("trades", s.get("portfolio", {}).get("trades", [])))
         rows.append({
             "instance": inst.name,
             "strategy": s["strategy"],
+            "broker": s.get("broker", "sim"),
             "symbols": ",".join(s["symbols"]),
             "equity": f"{eq:,.2f}",
             "return": fmt("total_return", eq / s["starting_cash"] - 1),
             "positions": " ".join(f"{k}:{v:.2f}" for k, v in pos.items()) or "flat",
-            "orders": len(s["portfolio"]["trades"]),
+            "orders": ntrades,
             "last update": hist[-1][0] or "",
         })
     print(table(rows))
@@ -140,7 +180,8 @@ def cmd_trades(args) -> None:
     path = Path(cfg.state_dir) / f"{args.name}.json"
     if not path.exists():
         raise SystemExit(f"No state for '{args.name}' yet")
-    trades = json.loads(path.read_text())["portfolio"]["trades"]
+    s = json.loads(path.read_text())
+    trades = s.get("trades", s.get("portfolio", {}).get("trades", []))
     rows = [{"time": t["ts"], "symbol": t["symbol"], "side": "BUY" if t["qty"] > 0 else "SELL",
              "qty": f"{abs(t['qty']):.4f}", "price": f"{t['price']:.2f}",
              "pnl": "" if t["realized_pnl"] is None else f"{t['realized_pnl']:+,.2f}"} for t in trades]
@@ -166,21 +207,27 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="command", required=True)
 
     sub.add_parser("list", help="List available strategies").set_defaults(func=cmd_list)
+    inf = sub.add_parser("info", help="Everything about one strategy: bar size, params, notes")
+    inf.add_argument("strategy")
+    inf.set_defaults(func=cmd_info)
 
     def data_args(sp):
         sp.add_argument("--start", default="2015-01-01", help="Start date (default 2015-01-01)")
         sp.add_argument("--end", default=None, help="End date (default today)")
-        sp.add_argument("--interval", default="1d", help="Bar size: 1d, 1h, 15m, 5m, ... (default 1d)")
+        sp.add_argument("--interval", default=None,
+                        help="Bar size: 1d, 1h, 15m, 5m, ... (default: what the strategy needs, else 1d)")
         sp.add_argument("--source", default="yfinance", choices=["yfinance", "alpaca", "csv"])
         sp.add_argument("--csv-dir", default="data", help="Folder with <SYMBOL>.csv for --source csv")
         sp.add_argument("--cash", type=float, default=10_000)
         sp.add_argument("--commission", type=float, default=0.0, help="Flat fee per order")
         sp.add_argument("--slippage-bps", type=float, default=1.0)
         sp.add_argument("--whole-shares", action="store_true", help="Disallow fractional shares")
+        sp.add_argument("--max-leverage", type=float, default=None,
+                        help="Max exposure / equity (default: what the strategy recommends, else 1)")
 
     b = sub.add_parser("backtest", help="Backtest one strategy")
     b.add_argument("strategy")
-    b.add_argument("symbols", nargs="+")
+    b.add_argument("symbols", nargs="*", help="Default: the strategy's recommended symbols")
     b.add_argument("-p", "--param", action="append", help="Override a parameter: -p fast=10 -p slow=30")
     b.add_argument("--trades", action="store_true", help="Print every trade")
     b.add_argument("--out", help="Folder to write equity.csv and trades.csv")

@@ -92,3 +92,10 @@ def test_csv_provider_with_aware_start(tmp_path):
     make_bars(n=50, start="2026-01-01").to_csv(tmp_path / "SPY.csv", index_label="date")
     df = CsvProvider(tmp_path).get_bars("SPY", start=datetime(2026, 2, 1, tzinfo=timezone.utc))
     assert df.index[0] >= pd.Timestamp("2026-02-01") and len(df) < 50
+
+
+def test_intraday_lookback_enough_for_opening_candle():
+    from tradebot.data import default_lookback
+
+    # 14-day daily ATR needs > 14 trading days of 5m history
+    assert default_lookback("5m").days >= 30

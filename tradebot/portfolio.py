@@ -43,6 +43,10 @@ class Portfolio:
         q = self.qty(symbol)
         return 1 if q > 0 else -1 if q < 0 else 0
 
+    def current_equity(self, prices: dict[str, float]) -> float:
+        """Equity, valuing any position without a price at its entry price."""
+        return self.equity({**self.avg_price, **prices})
+
     def equity(self, prices: dict[str, float]) -> float:
         return float(self.cash + sum(q * prices[s] for s, q in self.positions.items() if q))
 
@@ -89,12 +93,14 @@ class Portfolio:
         ts: Any,
         allocation: float = 1.0,
         weights: dict[str, float] | None = None,
+        max_leverage: float = 1.0,
     ) -> list[Trade]:
         """Move each symbol to its target direction (-1/0/1).
 
         Only trades when the direction changes, so calling it repeatedly with
         the same targets is a no-op. Closes go before opens so freed cash can
-        be reused. A new position gets ``equity * allocation * weight``.
+        be reused. A new position gets ``equity * allocation * weight``, capped
+        so total exposure stays within ``max_leverage * equity``.
         """
         weights = weights or {s: 1 / len(targets) for s in targets}
         trades: list[Trade] = []
@@ -115,8 +121,8 @@ class Portfolio:
             if d == 0:
                 continue
             budget = equity * allocation * weights.get(s, 0) - self.commission
-            if d > 0:
-                budget = min(budget, self.cash - self.commission)
+            gross = sum(abs(q) * all_prices.get(sym, prices.get(sym, 0)) for sym, q in self.positions.items())
+            budget = min(budget, max_leverage * equity - gross - self.commission)
             if budget <= 0:
                 continue
             fill = prices[s] * (1 + self.slippage_bps / 10_000)
@@ -125,6 +131,7 @@ class Portfolio:
                 qty = math.floor(qty)
             if qty > 0:
                 trades.append(self.order(s, d * qty, prices[s], ts))
+                all_prices[s] = prices[s]
         return [t for t in trades if t is not None]
 
     # ------------------------------------------------------------- persistence
